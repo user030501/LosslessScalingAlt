@@ -1,0 +1,13 @@
+{
+  "name": "lsalt",
+  "version": "0.1.0",
+  "description": "Original, independent Windows scaling and frame-generation utility (not affiliated with Lossless Scaling).",
+  "dependencies": [
+    {
+      "name": "imgui",
+      "features": ["docking-experimental", "dx11-binding", "win32-binding"]
+    },
+    "nlohmann-json"
+  ],
+  "builtin-baseline": "master"
+}
