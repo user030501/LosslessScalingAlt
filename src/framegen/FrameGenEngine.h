@@ -1,6 +1,7 @@
 #pragma once
 #include <wrl/client.h>
 #include <d3d11.h>
+#include <functional>
 #include <memory>
 #include <string>
 #include "../core/Types.h"
@@ -66,6 +67,22 @@ public:
     FrameGenMultiplier Multiplier() const { return m_multiplier; }
     FrameGenQualityMode QualityMode() const { return m_quality; }
 
+    // Phase 3: lets the engine check real VRAM headroom (via
+    // GpuDeviceManager::QueryVideoMemoryUsage, a real DXGI budget query --
+    // see PerfMonitor) before allocating a quality mode's resources, and
+    // automatically step down to a lower quality mode with a logged, UI-
+    // visible reason instead of risking a failed/thrashing allocation on
+    // the MX150's 2GB VRAM budget. Optional: if never set, no VRAM guard
+    // is applied. `query` returns false if VRAM usage isn't queryable on
+    // this adapter/driver (matches PerfMonitor's own fallback).
+    void SetVramQuery(std::function<bool(uint64_t& usedBytes, uint64_t& budgetBytes)> query) {
+        m_vramQuery = std::move(query);
+    }
+    // Exposed only so DiagnosticTests can temporarily install a synthetic
+    // low-budget query to exercise the VRAM-guard code path deterministically
+    // and then restore the real one afterward -- not meant for general use.
+    const std::function<bool(uint64_t&, uint64_t&)>& VramQuery() const { return m_vramQuery; }
+
     // Exposed for the UI preview and DiagnosticTests' CPU readback checks.
     ID3D11Texture2D* GeneratedOutputTexture() const;
     ID3D11ShaderResourceView* GeneratedOutputSRV() const;
@@ -88,6 +105,8 @@ private:
 
     FrameGenCapabilities m_capabilities;
     FrameGenStats m_cachedStats;
+    std::function<bool(uint64_t&, uint64_t&)> m_vramQuery;
+    std::string m_lastAutoAdjustReason;
 
     bool m_enabled = false;
     bool m_initialized = false;

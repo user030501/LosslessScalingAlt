@@ -23,10 +23,23 @@ void DrawGpuSettingsPanel(AppState& state) {
 
     AppConfig& cfg = state.config.Get();
 
+    const int autoWouldPick = state.gpu.SelectBestAdapterIndex();
+
     bool autoSelected = cfg.preferredAdapterIndex < 0;
     if (ImGui::RadioButton("Auto (recommended)", autoSelected)) {
         cfg.preferredAdapterIndex = -1;
         state.config.Save();
+    }
+    if (autoSelected) {
+        ImGui::Indent();
+        if (autoWouldPick >= 0) {
+            ImGui::TextDisabled("Auto picks by real measured capability: compute shaders + typed UAV store "
+                                 "required, then most dedicated VRAM as the tie-breaker (see below).");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f),
+                                "No enumerated adapter passed capability scoring; falling back to DXGI's default.");
+        }
+        ImGui::Unindent();
     }
 
     for (const auto& adapter : state.gpu.Adapters()) {
@@ -39,10 +52,14 @@ void DrawGpuSettingsPanel(AppState& state) {
             state.config.Save();
         }
         ImGui::Indent();
-        ImGui::TextDisabled("Dedicated VRAM: %.0f MB | D3D11: %s | Active now: %s",
+        ImGui::TextDisabled("Dedicated VRAM: %.0f MB | D3D11: %s | Compute shaders: %s | Typed UAV store: %s",
                              adapter.dedicatedVideoMemoryBytes / (1024.0 * 1024.0),
                              adapter.supportsD3D11 ? "yes" : "no",
-                             (adapter.index == state.gpu.ActiveAdapterIndex()) ? "yes" : "no");
+                             adapter.supportsComputeShaders ? "yes" : "no",
+                             adapter.supportsTypedUavStore ? "yes" : "no");
+        ImGui::TextDisabled("Active now: %s%s",
+                             (adapter.index == state.gpu.ActiveAdapterIndex()) ? "yes" : "no",
+                             (autoSelected && adapter.index == autoWouldPick) ? "  (what Auto picks)" : "");
         ImGui::Unindent();
     }
 

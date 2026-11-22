@@ -54,7 +54,15 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_csLumaExtract;
     Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_csDownsample2x;
-    Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_csBlockMatch;
+    // Phase 3: three parallel block-matching variants, one per quality
+    // preset's search radius (4/6/8 -- see FrameGenTypes.h), each with a
+    // thread-group size that exactly matches its candidate window so every
+    // GPU thread does useful work. m_csBlockMatchActive is whichever of the
+    // three matches the current FrameGenQualityParams, selected in Resize().
+    Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_csBlockMatchR4;
+    Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_csBlockMatchR6;
+    Microsoft::WRL::ComPtr<ID3D11ComputeShader> m_csBlockMatchR8;
+    ID3D11ComputeShader* m_csBlockMatchActive = nullptr;
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> m_downsampleCB;
     Microsoft::WRL::ComPtr<ID3D11Buffer> m_motionEstimationCB;

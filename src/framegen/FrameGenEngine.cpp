@@ -6,6 +6,7 @@
 
 #include <windows.h>
 #include <d3d11.h>
+#include <algorithm>
 
 namespace lsalt {
 
@@ -17,6 +18,40 @@ std::wstring ShaderDirectory() {
     const size_t slash = path.find_last_of(L"\\/");
     if (slash != std::wstring::npos) path = path.substr(0, slash);
     return path + L"\\shaders\\framegen";
+}
+
+uint32_t DivRoundUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
+
+// Mirrors the real resource sizes MotionEstimator::Resize and
+// FrameInterpolator::Resize allocate (see those files) for the given
+// output size and quality params: luma pyramid A+B (R16_FLOAT, 2 bytes/px)
+// at every pyramid level, forward+backward motion vector fields
+// (R16G16_FLOAT, 4 bytes/block) at every level, the occlusion mask
+// (R32_FLOAT, 4 bytes/block) and the final output frame (R8G8B8A8_UNORM,
+// 4 bytes/px). Used only as an admission-control estimate against the
+// real DXGI VRAM budget query -- never shown to the user as a performance
+// claim, only as an internal "would this quality mode fit" check.
+uint64_t EstimateQualityModeBytes(uint32_t width, uint32_t height, const FrameGenQualityParams& params) {
+    uint64_t total = 0;
+    uint32_t w = width, h = height;
+    for (int level = 0; level < params.pyramidLevels; ++level) {
+        w = std::max(w, 1u);
+        h = std::max(h, 1u);
+        const uint32_t numBlocksX = DivRoundUp(w, static_cast<uint32_t>(params.blockSize));
+        const uint32_t numBlocksY = DivRoundUp(h, static_cast<uint32_t>(params.blockSize));
+
+        total += static_cast<uint64_t>(w) * h * 2 * 2;                 // luma A + B, R16_FLOAT
+        total += static_cast<uint64_t>(numBlocksX) * numBlocksY * 4 * 2; // fwd + bwd MV, R16G16_FLOAT
+
+        w = std::max(w / 2, 1u);
+        h = std::max(h / 2, 1u);
+    }
+
+    const uint32_t finalBlocksX = DivRoundUp(std::max(width, 1u), static_cast<uint32_t>(params.blockSize));
+    const uint32_t finalBlocksY = DivRoundUp(std::max(height, 1u), static_cast<uint32_t>(params.blockSize));
+    total += static_cast<uint64_t>(finalBlocksX) * finalBlocksY * 4;             // occlusion mask, R32_FLOAT
+    total += static_cast<uint64_t>(std::max(width, 1u)) * std::max(height, 1u) * 4; // output frame, R8G8B8A8_UNORM
+    return total;
 }
 } // namespace
 
@@ -100,6 +135,38 @@ void FrameGenEngineD3D11::SetQualityMode(FrameGenQualityMode quality) {
 
 bool FrameGenEngineD3D11::RecreatePipeline() {
     if (!m_initialized || m_width == 0 || m_height == 0) return false;
+
+    m_lastAutoAdjustReason.clear();
+
+    // VRAM-aware quality selection: never allocate a fixed amount of VRAM
+    // without checking what's actually available first. Steps the quality
+    // mode down (never the resolution -- that stays the user's decision)
+    // until the estimated resource set fits a safety margin of real,
+    // measured headroom, or there is nowhere lower left to go.
+    if (m_vramQuery) {
+        uint64_t used = 0, budget = 0;
+        if (m_vramQuery(used, budget) && budget > 0) {
+            while (true) {
+                const FrameGenQualityParams candidateParams = FrameGenQualityParams::For(m_quality);
+                const uint64_t estimated = EstimateQualityModeBytes(m_width, m_height, candidateParams);
+                const uint64_t headroom = (budget > used) ? (budget - used) : 0;
+                const uint64_t safeHeadroom = static_cast<uint64_t>(headroom * 0.85); // margin for OS/driver/app overhead
+
+                if (estimated <= safeHeadroom || m_quality == FrameGenQualityMode::Performance) break;
+
+                const FrameGenQualityMode downgraded =
+                    (m_quality == FrameGenQualityMode::Quality) ? FrameGenQualityMode::Balanced : FrameGenQualityMode::Performance;
+                Logger::Instance().Warn("FrameGenEngine",
+                    "Estimated VRAM for " + std::string(ToString(m_quality)) + " quality at this resolution (" +
+                    std::to_string(estimated / (1024 * 1024)) + " MB) exceeds safe headroom (" +
+                    std::to_string(safeHeadroom / (1024 * 1024)) + " MB of " + std::to_string(budget / (1024 * 1024)) +
+                    " MB budget); auto-downgrading to " + std::string(ToString(downgraded)) + ".");
+                m_lastAutoAdjustReason = "Auto-downgraded to " + std::string(ToString(downgraded)) +
+                                          " quality: low VRAM headroom at this resolution.";
+                m_quality = downgraded;
+            }
+        }
+    }
 
     const FrameGenQualityParams params = FrameGenQualityParams::For(m_quality);
     if (!m_motionEstimator->Resize(m_device.Get(), m_width, m_height, params)) {
@@ -208,6 +275,7 @@ FrameGenStats FrameGenEngineD3D11::GetStats() const {
     } else {
         stats.statusText = "Running (2x)";
     }
+    stats.autoAdjustReason = m_lastAutoAdjustReason;
     return stats;
 }
 

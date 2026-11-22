@@ -127,10 +127,10 @@ bool App::Initialize(HINSTANCE hInstance) {
     // Phase 4: Frame Generation Engine + its synthetic test source. Real
     // game frames still require the Capture Engine (Phase 2), which is an
     // unimplemented stub (capture/CaptureEngine.h) -- see docs/ARCHITECTURE.md.
-    constexpr uint32_t kTestSourceWidth = 960;
-    constexpr uint32_t kTestSourceHeight = 540;
-
     m_state.frameGenEngine = std::make_unique<FrameGenEngineD3D11>();
+    m_state.frameGenEngine->SetVramQuery([this](uint64_t& used, uint64_t& budget) {
+        return m_state.gpu.QueryVideoMemoryUsage(m_state.gpu.ActiveAdapterIndex(), used, budget);
+    });
     if (m_state.frameGenEngine->Initialize(m_state.gpu.Device().Get(), m_state.gpu.Context().Get(), m_hwnd)) {
         m_state.frameGenEngine->SetQualityMode(m_state.config.Get().defaultFrameGenQuality);
         m_state.frameGenEngine->SetMultiplier(FrameGenMultiplier::X2);
@@ -143,6 +143,9 @@ bool App::Initialize(HINSTANCE hInstance) {
     m_state.testPatternSource = std::make_unique<TestPatternSource>();
     m_state.testPatternSource->Initialize(m_state.gpu.Device().Get(), kTestSourceWidth, kTestSourceHeight);
 
+    m_state.thermalMonitor = std::make_unique<ThermalMonitor>();
+    m_state.dynamicPerfManager = std::make_unique<DynamicPerformanceManager>();
+
     QueryPerformanceFrequency(&m_qpcFrequency);
     QueryPerformanceCounter(&m_lastFrameQpc);
 
@@ -153,6 +156,11 @@ bool App::Initialize(HINSTANCE hInstance) {
 void App::RenderFrame() {
     m_state.lastStats = m_state.perf->Sample();
 
+    if (m_state.thermalMonitor) {
+        m_state.lastThermalSample = m_state.thermalMonitor->Sample(
+            m_state.lastStats.systemCpuPercent, m_state.lastStats.gpuUtilPercent, m_state.lastStats.gpuUtilValid);
+    }
+
     LARGE_INTEGER now{};
     QueryPerformanceCounter(&now);
     const double dt = static_cast<double>(now.QuadPart - m_lastFrameQpc.QuadPart) / static_cast<double>(m_qpcFrequency.QuadPart);
@@ -162,6 +170,13 @@ void App::RenderFrame() {
         if (m_state.testPatternSource->Tick(m_state.gpu.Context().Get(), dt)) {
             m_state.frameGenEngine->GenerateInterpolatedFrame(
                 m_state.testPatternSource->FrameASRV(), m_state.testPatternSource->FrameBSRV());
+        }
+
+        if (m_state.dynamicPerfManager && m_state.frameGenEngine) {
+            const std::string reason = m_state.dynamicPerfManager->Update(
+                *m_state.frameGenEngine, m_state.frameGenEngine->GetStats(), m_state.lastThermalSample,
+                m_state.lastStats.gpuUtilPercent, m_state.lastStats.gpuUtilValid);
+            if (!reason.empty()) m_state.lastAutoPerfReason = reason;
         }
     }
 
@@ -174,7 +189,74 @@ void App::RenderFrame() {
 
     g_uiManager.Render();
 
-    m_swapChain->Present(1, 0);
+    const HRESULT presentHr = m_swapChain->Present(1, 0);
+    if (presentHr == DXGI_ERROR_DEVICE_REMOVED || presentHr == DXGI_ERROR_DEVICE_RESET) {
+        AttemptDeviceLossRecovery();
+    }
+}
+
+bool App::AttemptDeviceLossRecovery() {
+    const HRESULT removedReason = m_state.gpu.Device() ? m_state.gpu.Device()->GetDeviceRemovedReason() : E_FAIL;
+    Logger::Instance().Error("App", "D3D11 device lost (removed reason hr=" + std::to_string(removedReason) +
+                                         "). Attempting recovery...");
+    m_state.statusMessage = "GPU device lost (driver crash/reset). Attempting recovery...";
+
+    // Everything holding a reference to the old device/context/swapchain
+    // must be released before a new device can be created cleanly.
+    g_uiManager.Shutdown();
+    m_rtv.Reset();
+    m_swapChain.Reset();
+    m_state.frameGenEngine.reset();
+    m_state.testPatternSource.reset();
+
+    const int preferredAdapter = m_state.config.Get().preferredAdapterIndex;
+    if (!m_state.gpu.EnumerateAdapters() || !m_state.gpu.CreateDeviceOnAdapter(preferredAdapter)) {
+        Logger::Instance().Error("App", "Device-loss recovery failed: could not recreate the D3D11 device.");
+        m_state.statusMessage = "GPU device lost and recovery failed. Please restart the app.";
+        m_running = false;
+        return false;
+    }
+
+    if (!CreateSwapChain()) {
+        Logger::Instance().Error("App", "Device-loss recovery failed: could not recreate the swap chain.");
+        m_state.statusMessage = "GPU device lost and recovery failed. Please restart the app.";
+        m_running = false;
+        return false;
+    }
+
+    if (!g_uiManager.Initialize(m_hwnd, m_state.gpu.Device().Get(), m_state.gpu.Context().Get())) {
+        Logger::Instance().Error("App", "Device-loss recovery failed: could not reinitialize the UI renderer.");
+        m_state.statusMessage = "GPU device lost and recovery failed. Please restart the app.";
+        m_running = false;
+        return false;
+    }
+
+    m_state.frameGenEngine = std::make_unique<FrameGenEngineD3D11>();
+    m_state.frameGenEngine->SetVramQuery([this](uint64_t& used, uint64_t& budget) {
+        return m_state.gpu.QueryVideoMemoryUsage(m_state.gpu.ActiveAdapterIndex(), used, budget);
+    });
+    if (m_state.frameGenEngine->Initialize(m_state.gpu.Device().Get(), m_state.gpu.Context().Get(), m_hwnd)) {
+        m_state.frameGenEngine->SetQualityMode(m_state.config.Get().defaultFrameGenQuality);
+        m_state.frameGenEngine->SetMultiplier(FrameGenMultiplier::X2);
+        m_state.frameGenEngine->Resize(kTestSourceWidth, kTestSourceHeight);
+    } else {
+        Logger::Instance().Warn("App", "FrameGenEngine unsupported on the recreated device/driver: " +
+                                            m_state.frameGenEngine->Capabilities().unsupportedReason);
+    }
+
+    m_state.testPatternSource = std::make_unique<TestPatternSource>();
+    m_state.testPatternSource->Initialize(m_state.gpu.Device().Get(), kTestSourceWidth, kTestSourceHeight);
+
+    // Require the user to deliberately re-enable live generation after a
+    // recovery rather than silently resuming it on a just-recreated device.
+    m_state.frameGenLiveEnabled = false;
+    if (m_state.frameGenEngine) m_state.frameGenEngine->SetEnabled(false);
+
+    Logger::Instance().Info("App", "Device-loss recovery succeeded: GPU device, swap chain, UI renderer and "
+                                     "Frame Generation Engine were recreated.");
+    m_state.statusMessage = "Recovered from a GPU device loss. Frame generation was disabled as a precaution -- "
+                              "re-enable it from the Frame Generation tab.";
+    return true;
 }
 
 int App::Run() {

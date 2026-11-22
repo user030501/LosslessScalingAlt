@@ -3,6 +3,7 @@
 #include "TestPatternSource.h"
 #include "../core/Logger.h"
 
+#include <windows.h>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -368,6 +369,123 @@ std::vector<DiagnosticResult> DiagnosticTests::RunAll(FrameGenEngineD3D11& engin
         r.passed = ok;
         r.detail = ok ? "Survived resize cycles (full -> half -> full) and kept generating valid frames."
                       : "Failed to generate a valid frame after a resize.";
+        results.push_back(r);
+    }
+
+    // --- Phase 3 (GPU Optimization) scenarios ---
+
+    // 11/12. Real target processing resolutions, not just arbitrary scale
+    // factors of the synthetic source's native size: 720p and 1080p are
+    // what the brief's hardware test matrix actually asks for.
+    {
+        const uint32_t origW = source.Width(), origH = source.Height();
+        auto runAt = [&](const char* name, uint32_t w, uint32_t h) {
+            DiagnosticResult r{name, false, ""};
+            const auto start = std::chrono::steady_clock::now();
+            bool ok = source.Resize(device, w, h) && engine.Resize(w, h);
+            source.SetScenario(TestScenario::FastObject);
+            source.RenderExplicit(context, 0.0, dt);
+            ok = ok && engine.GenerateInterpolatedFrame(source.FrameASRV(), source.FrameBSRV()) != nullptr;
+            const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            char buf[128];
+            snprintf(buf, sizeof(buf), "%ux%u: allocate+generate in %.3fs", w, h, elapsed);
+            r.detail = buf;
+            r.passed = ok && elapsed < 5.0; // sanity bound against a hang, not a performance claim
+            results.push_back(r);
+        };
+        runAt("11. 720p Processing", 1280, 720);
+        runAt("12. 1080p Processing", 1920, 1080);
+        source.Resize(device, origW, origH);
+        engine.Resize(origW, origH);
+    }
+
+    // 13. Low-VRAM forced fallback: temporarily install a synthetic VRAM
+    // query reporting almost no headroom (clearly a synthetic condition --
+    // this is not claiming the real adapter is low on VRAM) and confirm
+    // the engine's admission-control guard (FrameGenEngineD3D11::
+    // RecreatePipeline) downgrades quality instead of failing outright,
+    // then restores the real query and the prior quality mode afterward.
+    {
+        DiagnosticResult r{"13. Low-VRAM Forced Fallback", false, ""};
+        const auto savedQuery = engine.VramQuery();
+        const FrameGenQualityMode savedQuality = engine.QualityMode();
+
+        engine.SetVramQuery([](uint64_t& used, uint64_t& budget) {
+            used = 0;
+            budget = 1 * 1024 * 1024; // 1 MB: forces the guard toward the lowest quality tier
+            return true;
+        });
+        // SetQualityMode() is a no-op if the requested mode already equals
+        // the current one (no RecreatePipeline call, so the just-installed
+        // fake query would never be consulted). Route through Balanced
+        // first so the second call is always a genuine transition into
+        // Quality regardless of what quality mode was active beforehand.
+        engine.SetQualityMode(FrameGenQualityMode::Balanced);
+        engine.SetQualityMode(FrameGenQualityMode::Quality);
+
+        source.SetScenario(TestScenario::FastObject);
+        source.RenderExplicit(context, 0.0, dt);
+        const bool generated = engine.GenerateInterpolatedFrame(source.FrameASRV(), source.FrameBSRV()) != nullptr;
+        const bool downgraded = engine.QualityMode() != FrameGenQualityMode::Quality;
+
+        char buf[160];
+        snprintf(buf, sizeof(buf),
+                 "requested Quality under a synthetic 1MB VRAM budget -> engine settled on %s; generation %s",
+                 ToString(engine.QualityMode()), generated ? "succeeded" : "failed");
+        r.detail = buf;
+        r.passed = downgraded && generated;
+
+        engine.SetVramQuery(savedQuery);
+        engine.SetQualityMode(savedQuality);
+        results.push_back(r);
+    }
+
+    // 14. Long-session stability (soak): several hundred generate calls
+    // across varying scenarios, checking the process' own open handle
+    // count (a real Win32 counter) doesn't grow materially -- a leak in
+    // per-frame GPU resource creation would show up here, since
+    // GenerateInterpolatedFrame should only ever touch resources allocated
+    // once in Resize(), never allocate new ones per call.
+    {
+        DiagnosticResult r{"14. Long-Session Stability (soak)", false, ""};
+        DWORD handlesBefore = 0;
+        const bool handleCountAvailable = GetProcessHandleCount(GetCurrentProcess(), &handlesBefore) != 0;
+
+        const TestScenario scenarios[] = {TestScenario::SlowObject, TestScenario::FastObject,
+                                           TestScenario::ComplexMotion, TestScenario::Occlusion};
+        bool anyFailed = false;
+        constexpr int kIterations = 300;
+        for (int i = 0; i < kIterations && !anyFailed; ++i) {
+            source.SetScenario(scenarios[i % 4]);
+            const double t = 1.0 + (i % 20) * dt;
+            source.RenderExplicit(context, t, t + dt);
+            if (!engine.GenerateInterpolatedFrame(source.FrameASRV(), source.FrameBSRV())) anyFailed = true;
+        }
+
+        DWORD handlesAfter = 0;
+        const bool handleCountAvailableAfter = GetProcessHandleCount(GetCurrentProcess(), &handlesAfter) != 0;
+        const HRESULT removed = device->GetDeviceRemovedReason();
+        const bool haveHandleDelta = handleCountAvailable && handleCountAvailableAfter;
+        const long handleGrowth = haveHandleDelta
+            ? static_cast<long>(handlesAfter) - static_cast<long>(handlesBefore)
+            : 0;
+
+        char buf[192];
+        if (haveHandleDelta) {
+            snprintf(buf, sizeof(buf), "%d generations, handle count %lu -> %lu (delta %ld), device-removed=%s",
+                     kIterations, static_cast<unsigned long>(handlesBefore), static_cast<unsigned long>(handlesAfter),
+                     handleGrowth, removed == S_OK ? "no" : "YES");
+        } else {
+            snprintf(buf, sizeof(buf),
+                     "%d generations, device-removed=%s (GetProcessHandleCount unavailable -- leak check skipped, "
+                     "result based only on generation success and device health)",
+                     kIterations, removed == S_OK ? "no" : "YES");
+        }
+        r.detail = buf;
+        // A small amount of growth is normal (UI/driver bookkeeping); sustained
+        // per-frame leaks would show up as growth on the same order as the
+        // iteration count, not a handful of handles.
+        r.passed = !anyFailed && removed == S_OK && (!haveHandleDelta || handleGrowth < 20);
         results.push_back(r);
     }
 

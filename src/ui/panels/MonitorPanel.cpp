@@ -1,5 +1,6 @@
 #include "Panels.h"
 #include "../../App.h"
+#include "../../framegen/FramePacing.h"
 #include <imgui.h>
 #include <vector>
 #include <deque>
@@ -56,6 +57,40 @@ void DrawMonitorPanel(AppState& state) {
     ImGui::Spacing();
     ImGui::Separator();
 
+    {
+        const int activeIdx = state.gpu.ActiveAdapterIndex();
+        std::string gpuLabel = "Unknown";
+        uint64_t dedicatedMB = 0;
+        if (activeIdx >= 0 && activeIdx < static_cast<int>(state.gpu.Adapters().size())) {
+            const auto& a = state.gpu.Adapters()[activeIdx];
+            gpuLabel = std::string(a.description.begin(), a.description.end());
+            dedicatedMB = a.dedicatedVideoMemoryBytes / (1024 * 1024);
+        }
+        ImGui::Text("Active GPU: %s (%llu MB dedicated VRAM)", gpuLabel.c_str(), static_cast<unsigned long long>(dedicatedMB));
+
+        if (state.lastStats.vramBudgetBytes > 0) {
+            ImGui::Text("VRAM: %.0f MB used / %.0f MB budget",
+                        state.lastStats.vramUsedBytes / (1024.0 * 1024.0),
+                        state.lastStats.vramBudgetBytes / (1024.0 * 1024.0));
+        } else {
+            ImGui::TextDisabled("VRAM: unavailable on this adapter/driver");
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "Thermal");
+    const ThermalSample& thermal = state.lastThermalSample;
+    if (thermal.cpuTempValid) {
+        ImGui::Text("CPU Temperature: %.1f degC (WMI MSAcpi_ThermalZoneTemperature)", thermal.cpuTempCelsius);
+    } else {
+        ImGui::TextDisabled("CPU Temperature: N/A (not exposed by this system's firmware/driver via WMI)");
+    }
+    ImGui::TextDisabled("GPU Temperature: N/A (requires vendor-specific NVIDIA NVAPI / AMD ADL; not used by this app)");
+    ImGui::Text("Thermal-pressure fallback signal (utilization-based): %.0f%%%s",
+                thermal.utilizationPressure * 100.0,
+                thermal.sustainedHighLoad ? "  -- sustained high load" : "");
+
     const bool liveRunning = state.frameGenEngine && state.frameGenEngine->IsEnabled();
     const FrameGenStats fgStats = state.frameGenEngine ? state.frameGenEngine->GetStats() : FrameGenStats{};
 
@@ -98,6 +133,23 @@ void DrawMonitorPanel(AppState& state) {
         const double hz = state.frameGenEngine->DetectedRefreshHz();
         if (hz > 0.0) ImGui::Text("%.0f Hz", hz); else ImGui::TextDisabled("unknown");
         ImGui::Columns(1);
+
+        ImGui::Spacing();
+        ImGui::Columns(2, "fg_cols3", false);
+        ImGui::Text("GPU Submission Queue Depth");
+        ImGui::Text("%llu / %zu in-flight", static_cast<unsigned long long>(fgStats.queueDepth), FramePacing::kMaxQueueDepth);
+        ImGui::NextColumn();
+        ImGui::Text("Auto Performance Management");
+        ImGui::Text("%s", (state.dynamicPerfManager && state.dynamicPerfManager->AutoEnabled()) ? "Enabled (see Frame Generation tab)" : "Disabled");
+        ImGui::Columns(1);
+
+        if (!fgStats.autoAdjustReason.empty()) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.2f, 1.0f), "Auto-adjusted: %s", fgStats.autoAdjustReason.c_str());
+        } else if (!state.lastAutoPerfReason.empty()) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("Last automatic change: %s", state.lastAutoPerfReason.c_str());
+        }
     }
 }
 

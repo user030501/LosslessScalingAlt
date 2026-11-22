@@ -92,9 +92,11 @@ void UpdateDynamicCB(ID3D11DeviceContext* context, ID3D11Buffer* cb, const T& da
 bool MotionEstimator::Initialize(ID3D11Device* device, const std::wstring& shaderDir) {
     m_csLumaExtract = ShaderCompiler::CompileComputeShader(device, shaderDir + L"\\Downsample.hlsl", "CSLumaExtract");
     m_csDownsample2x = ShaderCompiler::CompileComputeShader(device, shaderDir + L"\\Downsample.hlsl", "CSDownsample2x");
-    m_csBlockMatch = ShaderCompiler::CompileComputeShader(device, shaderDir + L"\\MotionEstimation.hlsl", "CSBlockMatch");
+    m_csBlockMatchR4 = ShaderCompiler::CompileComputeShader(device, shaderDir + L"\\MotionEstimation.hlsl", "CSBlockMatchR4");
+    m_csBlockMatchR6 = ShaderCompiler::CompileComputeShader(device, shaderDir + L"\\MotionEstimation.hlsl", "CSBlockMatchR6");
+    m_csBlockMatchR8 = ShaderCompiler::CompileComputeShader(device, shaderDir + L"\\MotionEstimation.hlsl", "CSBlockMatchR8");
 
-    if (!m_csLumaExtract || !m_csDownsample2x || !m_csBlockMatch) {
+    if (!m_csLumaExtract || !m_csDownsample2x || !m_csBlockMatchR4 || !m_csBlockMatchR6 || !m_csBlockMatchR8) {
         Logger::Instance().Error("MotionEstimator", "Failed to compile one or more motion estimation shaders.");
         return false;
     }
@@ -151,6 +153,20 @@ bool MotionEstimator::Resize(ID3D11Device* device, uint32_t width, uint32_t heig
 
     if (!allocMvLevels(m_fwdMV)) return false;
     if (!allocMvLevels(m_bwdMV)) return false;
+
+    // Pick the block-matching variant whose fixed thread-group size matches
+    // this quality preset's search radius exactly (see MotionEstimation.hlsl).
+    // Current presets use radius 4/6/8 exactly; a radius that doesn't match
+    // one of those exactly still works correctly -- the shader clamps its
+    // own search to min(g_searchRadius, compiledRadius) -- so round up to
+    // the smallest variant wide enough to search the full requested radius.
+    if (m_params.searchRadius <= 4) {
+        m_csBlockMatchActive = m_csBlockMatchR4.Get();
+    } else if (m_params.searchRadius <= 6) {
+        m_csBlockMatchActive = m_csBlockMatchR6.Get();
+    } else {
+        m_csBlockMatchActive = m_csBlockMatchR8.Get();
+    }
 
     m_valid = true;
     return true;
@@ -216,9 +232,9 @@ bool MotionEstimator::BuildPyramidB(ID3D11DeviceContext* context, ID3D11ShaderRe
 
 ID3D11ShaderResourceView* MotionEstimator::EstimateMotion(ID3D11DeviceContext* context, const LumaPyramid& from,
                                                             const LumaPyramid& to, std::vector<MVLevel>& mvLevels) {
-    if (!m_valid) return nullptr;
+    if (!m_valid || !m_csBlockMatchActive) return nullptr;
 
-    context->CSSetShader(m_csBlockMatch.Get(), nullptr, 0);
+    context->CSSetShader(m_csBlockMatchActive, nullptr, 0);
 
     for (int level = static_cast<int>(m_levelSizes.size()) - 1; level >= 0; --level) {
         const bool hasPrev = (level + 1) < static_cast<int>(m_levelSizes.size());

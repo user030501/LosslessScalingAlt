@@ -67,9 +67,27 @@ void DrawLiveEngineSection(AppState& state) {
         state.testPatternSource->SetSourceFps(srcFps);
     }
 
+    if (state.dynamicPerfManager) {
+        bool autoPerf = state.dynamicPerfManager->AutoEnabled();
+        if (ImGui::Checkbox("Auto Performance Management", &autoPerf)) {
+            state.dynamicPerfManager->SetAutoEnabled(autoPerf);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Automatically steps the quality mode above down under sustained GPU overload "
+                "(measured GPU dispatch time, GPU utilization, or the thermal fallback signal -- "
+                "see Performance Monitor) and back up once headroom has been stable for a while. "
+                "Never changes resolution. Manually picking a quality mode here still works while "
+                "this is on; it is just liable to be changed again under real sustained load.");
+        }
+    }
+
     const FrameGenStats stats = state.frameGenEngine->GetStats();
     ImGui::Spacing();
     ImGui::Text("Status: %s", stats.statusText.c_str());
+    if (!stats.autoAdjustReason.empty()) {
+        ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.2f, 1.0f), "%s", stats.autoAdjustReason.c_str());
+    }
 
     ImGui::Spacing();
     if (ImGui::Button("Run Diagnostic Tests (10 scenarios)")) {

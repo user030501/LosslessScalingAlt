@@ -69,25 +69,54 @@ std::wstring ConfigManager::ConfigFilePath() const {
     return ConfigDir() + L"\\config.json";
 }
 
-void ConfigManager::Load() {
-    std::ifstream file(ConfigFilePath());
-    if (!file.is_open()) {
-        m_config = AppConfig{};
-        Save();
-        return;
-    }
+namespace {
+std::wstring BackupFilePath(const std::wstring& configPath) { return configPath + L".bak"; }
+
+bool TryLoadFrom(const std::wstring& path, AppConfig& out) {
+    std::ifstream file(path);
+    if (!file.is_open()) return false;
     try {
         nlohmann::json j;
         file >> j;
-        m_config = j.get<AppConfig>();
-    } catch (const std::exception& e) {
-        Logger::Instance().Error("ConfigManager", std::string("Failed to parse config.json: ") + e.what());
-        m_config = AppConfig{};
+        out = j.get<AppConfig>();
+        return true;
+    } catch (const std::exception&) {
+        return false;
     }
+}
+} // namespace
+
+void ConfigManager::Load() {
+    const std::wstring path = ConfigFilePath();
+    if (TryLoadFrom(path, m_config)) return;
+
+    // config.json is missing or failed to parse (e.g. the process was
+    // killed mid-write). Before falling back to factory defaults, try the
+    // backup Save() keeps of the last known-good config.
+    const std::wstring backupPath = BackupFilePath(path);
+    if (TryLoadFrom(backupPath, m_config)) {
+        Logger::Instance().Warn("ConfigManager", "config.json missing/corrupt; recovered settings from config.json.bak.");
+        return;
+    }
+
+    Logger::Instance().Error("ConfigManager", "config.json and its backup are both missing/corrupt; using defaults.");
+    m_config = AppConfig{};
+    Save();
 }
 
 void ConfigManager::Save() const {
-    std::ofstream file(ConfigFilePath());
+    const std::wstring path = ConfigFilePath();
+
+    // Back up whatever is currently on disk before overwriting it, so a
+    // write that's interrupted partway (crash, power loss) never leaves
+    // the user with a corrupt config.json and no way back to their last
+    // known-good settings.
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec)) {
+        std::filesystem::copy_file(path, BackupFilePath(path), std::filesystem::copy_options::overwrite_existing, ec);
+    }
+
+    std::ofstream file(path);
     if (!file.is_open()) {
         Logger::Instance().Error("ConfigManager", "Could not open config.json for writing.");
         return;

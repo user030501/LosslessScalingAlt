@@ -7,6 +7,35 @@ using Microsoft::WRL::ComPtr;
 
 namespace lsalt {
 
+namespace {
+// Creates a throwaway device on the given adapter solely to query real
+// capability bits (feature level, typed UAV store for R8G8B8A8_UNORM --
+// the format the FrameGen interpolation shader writes). This mirrors
+// FrameGenEngineD3D11::DetectCapabilities exactly, run once per adapter at
+// enumeration time so the GPU Settings panel and auto-select scoring can
+// show/use real per-adapter numbers instead of only probing the adapter
+// that happened to be chosen for the app's own UI device.
+void ProbeAdapterCapabilities(IDXGIAdapter1* adapter, GpuAdapterInfo& info) {
+    ComPtr<ID3D11Device> probeDevice;
+    D3D_FEATURE_LEVEL achieved{};
+    HRESULT hr = D3D11CreateDevice(
+        adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0,
+        nullptr, 0, D3D11_SDK_VERSION, probeDevice.GetAddressOf(), &achieved, nullptr);
+    if (FAILED(hr)) return;
+
+    info.featureLevelMajor = (achieved >> 12) & 0xF;
+    info.featureLevelMinor = (achieved >> 8) & 0xF;
+    info.supportsComputeShaders = achieved >= D3D_FEATURE_LEVEL_11_0;
+    if (!info.supportsComputeShaders) return;
+
+    D3D11_FEATURE_DATA_FORMAT_SUPPORT2 fmt2{};
+    fmt2.InFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+    if (SUCCEEDED(probeDevice->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT2, &fmt2, sizeof(fmt2)))) {
+        info.supportsTypedUavStore = (fmt2.OutFormatSupport2 & D3D11_FORMAT_SUPPORT2_UAV_TYPED_STORE) != 0;
+    }
+}
+} // namespace
+
 bool GpuDeviceManager::EnumerateAdapters() {
     m_adapters.clear();
     m_rawAdapters.clear();
@@ -43,22 +72,71 @@ bool GpuDeviceManager::EnumerateAdapters() {
             adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0,
             nullptr, 0, D3D11_SDK_VERSION, nullptr, &achieved, nullptr);
         info.supportsD3D11 = SUCCEEDED(probeHr);
+        if (info.supportsD3D11) {
+            ProbeAdapterCapabilities(adapter.Get(), info);
+        }
 
         m_adapters.push_back(info);
         m_rawAdapters.push_back(adapter);
 
         Logger::Instance().Info("GpuDeviceManager",
             "Found adapter: " + std::string(info.description.begin(), info.description.end()) +
-            (info.supportsD3D11 ? " [D3D11 OK]" : " [D3D11 unsupported]"));
+            (info.supportsD3D11 ? " [D3D11 OK]" : " [D3D11 unsupported]") +
+            (info.supportsComputeShaders ? ", compute shaders OK" : "") +
+            (info.supportsTypedUavStore ? ", typed UAV store OK" : "") +
+            ", dedicated VRAM " + std::to_string(info.dedicatedVideoMemoryBytes / (1024 * 1024)) + " MB");
     }
 
     return !m_adapters.empty();
 }
 
+int GpuDeviceManager::SelectBestAdapterIndex() const {
+    int bestIndex = -1;
+    int64_t bestScore = -1;
+    for (const auto& info : m_adapters) {
+        if (!info.isHardware || !info.supportsD3D11) continue;
+
+        // Hard requirements for this app's actual compute pipeline: without
+        // both of these the FrameGen engine reports itself unsupported on
+        // that adapter anyway (see FrameGenEngineD3D11::DetectCapabilities),
+        // so an adapter missing either is never preferred over one that has
+        // them, regardless of VRAM.
+        int64_t score = 0;
+        score += info.supportsComputeShaders ? (1LL << 40) : 0;
+        score += info.supportsTypedUavStore ? (1LL << 39) : 0;
+        // Tie-breaker among capable adapters: more dedicated VRAM, a real
+        // measured value from DXGI, not an assumption.
+        score += static_cast<int64_t>(info.dedicatedVideoMemoryBytes);
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestIndex = info.index;
+        }
+    }
+    return bestIndex;
+}
+
 bool GpuDeviceManager::CreateDeviceOnAdapter(int preferredAdapterIndex) {
+    int effectiveIndex = preferredAdapterIndex;
+    if (effectiveIndex < 0) {
+        // "Auto": pick the adapter our own capability probe found most
+        // suitable (see SelectBestAdapterIndex) instead of leaving the
+        // choice to DXGI's implementation-defined default, which on a
+        // hybrid-graphics laptop (e.g. this app's Intel UHD 620 + NVIDIA
+        // MX150 target) is not guaranteed to be the more capable GPU.
+        effectiveIndex = SelectBestAdapterIndex();
+        if (effectiveIndex >= 0) {
+            Logger::Instance().Info("GpuDeviceManager",
+                "Auto-selected adapter index " + std::to_string(effectiveIndex) + " as most suitable.");
+        } else {
+            Logger::Instance().Warn("GpuDeviceManager",
+                "No adapter passed capability scoring; falling back to DXGI's default adapter.");
+        }
+    }
+
     IDXGIAdapter1* adapter = nullptr;
-    if (preferredAdapterIndex >= 0 && preferredAdapterIndex < static_cast<int>(m_rawAdapters.size())) {
-        adapter = m_rawAdapters[preferredAdapterIndex].Get();
+    if (effectiveIndex >= 0 && effectiveIndex < static_cast<int>(m_rawAdapters.size())) {
+        adapter = m_rawAdapters[effectiveIndex].Get();
     }
 
     UINT flags = 0;
@@ -98,7 +176,12 @@ bool GpuDeviceManager::CreateDeviceOnAdapter(int preferredAdapterIndex) {
         return false;
     }
 
-    m_activeAdapterIndex = preferredAdapterIndex;
+    // Record which adapter is actually active even under "Auto"
+    // (preferredAdapterIndex == -1): leaving this at -1 would silently
+    // break VRAM-usage queries (QueryVideoMemoryUsage rejects a negative
+    // index) and the GPU Settings panel's "Active now" indicator whenever
+    // Auto-select picked a real adapter.
+    m_activeAdapterIndex = effectiveIndex;
     Logger::Instance().Info("GpuDeviceManager", "D3D11 device created (feature level " + std::to_string(achieved) + ").");
     return true;
 }

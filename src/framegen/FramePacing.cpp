@@ -57,7 +57,6 @@ void FramePacing::Reset() {
     m_avgSourceIntervalSec = 0.0;
     m_droppedFrames = 0;
     m_framesGenerated = 0;
-    m_queueDepth = 0;
     m_lastMotionEstimationMs = 0.0;
     m_lastInterpolationMs = 0.0;
 }
@@ -169,7 +168,17 @@ void FramePacing::FillStats(FrameGenStats& stats) const {
     stats.totalGpuMs = m_lastMotionEstimationMs + m_lastInterpolationMs;
     stats.framesGenerated = m_framesGenerated;
     stats.droppedFrames = m_droppedFrames;
-    stats.queueDepth = m_queueDepth;
+
+    // Real GPU submission backlog: how many of the timing ring's slots are
+    // still waiting on the GPU to finish (PollOldestTiming hasn't been able
+    // to read them back yet). Phase 2 left this field wired to a setter
+    // nothing ever called, which made it a permanent, misleading 0; this is
+    // the actual bounded in-flight-work count instead.
+    size_t pending = 0;
+    for (const auto& slot : m_timingSlots) {
+        if (slot.pending) ++pending;
+    }
+    stats.queueDepth = pending;
 }
 
 } // namespace lsalt

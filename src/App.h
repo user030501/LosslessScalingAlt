@@ -14,6 +14,8 @@
 #include "framegen/FrameGenEngine.h"
 #include "framegen/TestPatternSource.h"
 #include "framegen/DiagnosticTests.h"
+#include "framegen/ThermalMonitor.h"
+#include "framegen/DynamicPerformanceManager.h"
 
 namespace lsalt {
 
@@ -44,6 +46,15 @@ struct AppState {
     std::unique_ptr<TestPatternSource> testPatternSource;
     bool frameGenLiveEnabled = false;
     std::vector<DiagnosticResult> lastDiagnosticsResults;
+
+    // Phase 3: thermal-aware signal + closed-loop quality auto-adjustment.
+    // See ThermalMonitor.h / DynamicPerformanceManager.h for what is and
+    // isn't real here (CPU temperature is best-effort; GPU temperature is
+    // never available; both have a utilization/trend-based fallback).
+    std::unique_ptr<ThermalMonitor> thermalMonitor;
+    std::unique_ptr<DynamicPerformanceManager> dynamicPerfManager;
+    ThermalSample lastThermalSample;
+    std::string lastAutoPerfReason; // most recent automatic change, for the UI
 };
 
 // Owns the Win32 window, D3D11 swapchain and the ImGui frame lifecycle.
@@ -69,6 +80,19 @@ private:
     bool CreateSwapChain();
     void ResizeSwapChain(UINT width, UINT height);
     void RenderFrame();
+
+    // Phase 3 stability: real D3D11 device-loss recovery. Triggered when
+    // Present() reports DXGI_ERROR_DEVICE_REMOVED/RESET (a real, recoverable
+    // failure mode on the laptop GPUs this targets, under thermal/driver
+    // stress). Tears down and recreates the device, swap chain, UI render
+    // backend and Frame Generation Engine; returns false if recovery itself
+    // fails, in which case the app shuts down rather than running on a
+    // broken device. Live frame generation is deliberately left disabled
+    // after a successful recovery so the user re-enables it knowingly.
+    bool AttemptDeviceLossRecovery();
+
+    static constexpr uint32_t kTestSourceWidth = 960;
+    static constexpr uint32_t kTestSourceHeight = 540;
 
     HWND m_hwnd = nullptr;
     Microsoft::WRL::ComPtr<IDXGISwapChain1> m_swapChain;

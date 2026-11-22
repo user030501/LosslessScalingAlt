@@ -18,8 +18,18 @@ public:
     const std::vector<GpuAdapterInfo>& Adapters() const { return m_adapters; }
 
     // Creates the D3D11 device + immediate context used for the UI swapchain.
-    // preferredAdapterIndex of -1 means "let DXGI pick the default adapter".
+    // preferredAdapterIndex of -1 means "automatically pick the most
+    // suitable compatible adapter" (see SelectBestAdapterIndex) rather than
+    // leaving the choice to DXGI's implementation-defined default, which on
+    // a hybrid-graphics laptop is not guaranteed to be the more capable GPU.
     bool CreateDeviceOnAdapter(int preferredAdapterIndex);
+
+    // Scores every enumerated adapter by real, measured capability
+    // (compute shader + typed UAV store support, then dedicated VRAM as a
+    // tie-breaker) and returns the index of the best one, or -1 if none
+    // support what this app's compute pipeline needs. Exposed so the GPU
+    // Settings panel can show which adapter "Auto" would actually pick.
+    int SelectBestAdapterIndex() const;
 
     Microsoft::WRL::ComPtr<ID3D11Device> Device() const { return m_device; }
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> Context() const { return m_context; }

@@ -28,6 +28,8 @@ add_executable(LSAlt WIN32
     src/framegen/FrameGenEngine.cpp
     src/framegen/TestPatternSource.cpp
     src/framegen/DiagnosticTests.cpp
+    src/framegen/ThermalMonitor.cpp
+    src/framegen/DynamicPerformanceManager.cpp
     src/ui/UIManager.cpp
     src/ui/panels/HomePanel.cpp
     src/ui/panels/ScalingPanel.cpp
@@ -53,6 +55,7 @@ target_link_libraries(LSAlt PRIVATE
     comctl32
     comdlg32
     dwmapi
+    wbemuuid
 )
 
 target_compile_definitions(LSAlt PRIVATE

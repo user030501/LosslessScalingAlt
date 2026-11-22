@@ -97,6 +97,16 @@ struct GpuAdapterInfo {
     uint64_t dedicatedVideoMemoryBytes = 0;
     bool isHardware = true;
     bool supportsD3D11 = false;
+
+    // Phase 3: real per-adapter capability probe results (a throwaway
+    // device is created against this adapter during enumeration solely to
+    // query these -- see GpuDeviceManager::EnumerateAdapters). Used both to
+    // show real "what this GPU can actually run" info in the GPU Settings
+    // panel and to score adapters for auto-selection.
+    bool supportsComputeShaders = false;     // feature level >= 11_0
+    bool supportsTypedUavStore = false;      // required for the FrameGen interpolation shader's output
+    int featureLevelMajor = 0;
+    int featureLevelMinor = 0;
 };
 
 constexpr uint32_t kVendorNVIDIA = 0x10DE;

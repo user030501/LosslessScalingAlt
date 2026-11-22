@@ -52,6 +52,12 @@ struct FrameGenStats {
     uint64_t queueDepth = 0;
     bool engineActive = false;
     std::string statusText;
+
+    // Phase 3: non-empty when the engine or DynamicPerformanceManager has
+    // automatically changed the quality mode since the last time this was
+    // read (VRAM headroom, sustained GPU overload, etc.) -- surfaced in the
+    // UI so an automatic change is never silent.
+    std::string autoAdjustReason;
 };
 
 } // namespace lsalt

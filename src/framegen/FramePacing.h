@@ -28,8 +28,6 @@ public:
     // Call once per interpolated frame produced.
     void RecordGeneratedFrame();
 
-    void SetQueueDepth(size_t depth) { m_queueDepth = depth; }
-
     // Brackets GPU work for timing. Safe to call every frame; internally
     // polls a ring of queries so the render thread is never blocked
     // waiting on the GPU.
@@ -65,7 +63,6 @@ private:
     double m_avgSourceIntervalSec = 0.0;
     uint64_t m_droppedFrames = 0;
     uint64_t m_framesGenerated = 0;
-    size_t m_queueDepth = 0;
 
     static constexpr int kTimingSlotCount = 4;
     std::array<TimingSlot, kTimingSlotCount> m_timingSlots;
