@@ -45,15 +45,60 @@ void DrawMonitorPanel(AppState& state) {
     snprintf(vramOverlay, sizeof(vramOverlay), "%.1f%%", vramPercent);
     PlotHistory("VRAM Utilization (active adapter)", state.perf->VramHistory(), vramOverlay);
 
+    if (state.lastStats.gpuUtilValid) {
+        char gpuOverlay[64];
+        snprintf(gpuOverlay, sizeof(gpuOverlay), "%.1f%%", state.lastStats.gpuUtilPercent);
+        PlotHistory("GPU Utilization (3D engine, system-wide)", state.perf->GpuUtilHistory(), gpuOverlay);
+    } else {
+        ImGui::TextDisabled("GPU Utilization: N/A (the \"GPU Engine\" PDH counter is not available on this system)");
+    }
+
     ImGui::Spacing();
     ImGui::Separator();
+
+    const bool liveRunning = state.frameGenEngine && state.frameGenEngine->IsEnabled();
+    const FrameGenStats fgStats = state.frameGenEngine ? state.frameGenEngine->GetStats() : FrameGenStats{};
+
+    ImGui::TextWrapped(liveRunning
+        ? "Frame Generation live-engine metrics below are real, measured numbers from the synthetic "
+          "test-pattern source (see the Frame Generation tab) -- there is still no real game attached "
+          "(Capture Engine is Phase 2, not implemented)."
+        : "Per-game FPS, frame time and \"generated FPS\" stay blank until the Capture Engine (Phase 2) "
+          "is attached to a running game. Enable the Frame Generation tab's Live Engine for real "
+          "synthetic-source metrics in the meantime.");
+
     ImGui::Columns(3, "fps_cols", false);
-    ImGui::Text("Original FPS");    ImGui::TextDisabled("N/A (Phase 2)");
+    ImGui::Text("Source (Original) FPS");
+    if (liveRunning) ImGui::Text("%.1f", fgStats.sourceFps); else ImGui::TextDisabled("N/A (Phase 2)");
     ImGui::NextColumn();
-    ImGui::Text("Generated FPS");   ImGui::TextDisabled("N/A (Phase 4)");
+    ImGui::Text("Generated FPS");
+    if (liveRunning) ImGui::Text("%.1f", fgStats.generatedFps); else ImGui::TextDisabled("N/A (disabled)");
     ImGui::NextColumn();
-    ImGui::Text("Displayed FPS");   ImGui::TextDisabled("N/A (Phase 2)");
+    ImGui::Text("Displayed FPS");
+    if (liveRunning) ImGui::Text("%.1f", fgStats.displayedFps); else ImGui::TextDisabled("N/A (Phase 2)");
     ImGui::Columns(1);
+
+    if (liveRunning) {
+        ImGui::Spacing();
+        ImGui::Columns(3, "fg_cols", false);
+        ImGui::Text("Frame Time");         ImGui::Text("%.2f ms", fgStats.lastFrameTimeMs);
+        ImGui::NextColumn();
+        ImGui::Text("Motion Est. GPU Time"); ImGui::Text("%.2f ms", fgStats.motionEstimationGpuMs);
+        ImGui::NextColumn();
+        ImGui::Text("Interpolation GPU Time"); ImGui::Text("%.2f ms", fgStats.interpolationGpuMs);
+        ImGui::Columns(1);
+
+        ImGui::Spacing();
+        ImGui::Columns(3, "fg_cols2", false);
+        ImGui::Text("Frames Generated");   ImGui::Text("%llu", static_cast<unsigned long long>(fgStats.framesGenerated));
+        ImGui::NextColumn();
+        ImGui::Text("Dropped Frames");     ImGui::Text("%llu", static_cast<unsigned long long>(fgStats.droppedFrames));
+        ImGui::NextColumn();
+        ImGui::Text("Detected Refresh Rate");
+        const double hz = state.frameGenEngine->DetectedRefreshHz();
+        if (hz > 0.0) ImGui::Text("%.0f Hz", hz); else ImGui::TextDisabled("unknown");
+        ImGui::Columns(1);
+    }
 }
 
 } // namespace lsalt

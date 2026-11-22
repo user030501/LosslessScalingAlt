@@ -2,6 +2,7 @@
 #include <string>
 #include <nlohmann/json.hpp>
 #include "Types.h"
+#include "Logger.h" // for LogLevel, used by AppConfig below
 
 namespace lsalt {
 

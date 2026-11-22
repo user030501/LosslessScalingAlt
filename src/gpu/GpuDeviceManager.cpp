@@ -77,6 +77,22 @@ bool GpuDeviceManager::CreateDeviceOnAdapter(int preferredAdapterIndex) {
         nullptr, flags, levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
         m_device.ReleaseAndGetAddressOf(), &achieved, m_context.ReleaseAndGetAddressOf());
 
+    // DXGI_ERROR_SDK_COMPONENT_MISSING: the D3D11 debug layer (D3D11_CREATE_DEVICE_DEBUG)
+    // requires the optional "Graphics Tools" Windows feature, which most
+    // machines -- including ones this app targets -- don't have installed.
+    // Retry without it rather than failing outright on every Debug build.
+    if (FAILED(hr) && (flags & D3D11_CREATE_DEVICE_DEBUG)) {
+        Logger::Instance().Warn("GpuDeviceManager",
+            "D3D11CreateDevice with the debug layer failed (hr=" + std::to_string(hr) +
+            "); the 'Graphics Tools' optional feature is likely not installed. Retrying without it.");
+        flags &= ~D3D11_CREATE_DEVICE_DEBUG;
+        hr = D3D11CreateDevice(
+            adapter,
+            adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE,
+            nullptr, flags, levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
+            m_device.ReleaseAndGetAddressOf(), &achieved, m_context.ReleaseAndGetAddressOf());
+    }
+
     if (FAILED(hr)) {
         Logger::Instance().Error("GpuDeviceManager", "D3D11CreateDevice failed, hr=" + std::to_string(hr));
         return false;

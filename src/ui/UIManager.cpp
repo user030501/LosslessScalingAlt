@@ -3,8 +3,8 @@
 #include "../App.h"
 
 #include <imgui.h>
-#include <backends/imgui_impl_win32.h>
-#include <backends/imgui_impl_dx11.h>
+#include <imgui_impl_win32.h>
+#include <imgui_impl_dx11.h>
 
 namespace lsalt {
 
@@ -71,7 +71,7 @@ void UIManager::Draw(AppState& state) {
     ImGui::Begin("##root", nullptr, flags);
     ImGui::PopStyleVar(2);
 
-    ImGui::BeginChild("##sidebar", ImVec2(220, 0), true);
+    ImGui::BeginChild("##sidebar", ImVec2(220, 0), ImGuiChildFlags_Borders);
     ImGui::Spacing();
     ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "  LSAlt");
     ImGui::Spacing();
@@ -88,7 +88,7 @@ void UIManager::Draw(AppState& state) {
 
     ImGui::SameLine();
 
-    ImGui::BeginChild("##content", ImVec2(0, 0), false, ImGuiWindowFlags_AlwaysUseWindowPadding);
+    ImGui::BeginChild("##content", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::Dummy(ImVec2(0, 4));
     ImGui::Indent(8);
     ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "%s", kNavItems[state.activePanel].label);

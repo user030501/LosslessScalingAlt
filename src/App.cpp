@@ -3,7 +3,12 @@
 #include "ui/UIManager.h"
 
 #include <imgui.h>
-#include <backends/imgui_impl_win32.h>
+#include <imgui_impl_win32.h>
+
+// imgui_impl_win32.h intentionally comments this declaration out (to avoid
+// dragging a <windows.h> dependency into the backend header) and asks the
+// application to copy it in -- see that header's comment above the #if 0.
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 namespace lsalt {
 
@@ -119,12 +124,46 @@ bool App::Initialize(HINSTANCE hInstance) {
         return false;
     }
 
+    // Phase 4: Frame Generation Engine + its synthetic test source. Real
+    // game frames still require the Capture Engine (Phase 2), which is an
+    // unimplemented stub (capture/CaptureEngine.h) -- see docs/ARCHITECTURE.md.
+    constexpr uint32_t kTestSourceWidth = 960;
+    constexpr uint32_t kTestSourceHeight = 540;
+
+    m_state.frameGenEngine = std::make_unique<FrameGenEngineD3D11>();
+    if (m_state.frameGenEngine->Initialize(m_state.gpu.Device().Get(), m_state.gpu.Context().Get(), m_hwnd)) {
+        m_state.frameGenEngine->SetQualityMode(m_state.config.Get().defaultFrameGenQuality);
+        m_state.frameGenEngine->SetMultiplier(FrameGenMultiplier::X2);
+        m_state.frameGenEngine->Resize(kTestSourceWidth, kTestSourceHeight);
+    } else {
+        Logger::Instance().Warn("App", "FrameGenEngine unsupported on this GPU/driver: " +
+                                            m_state.frameGenEngine->Capabilities().unsupportedReason);
+    }
+
+    m_state.testPatternSource = std::make_unique<TestPatternSource>();
+    m_state.testPatternSource->Initialize(m_state.gpu.Device().Get(), kTestSourceWidth, kTestSourceHeight);
+
+    QueryPerformanceFrequency(&m_qpcFrequency);
+    QueryPerformanceCounter(&m_lastFrameQpc);
+
     m_running = true;
     return true;
 }
 
 void App::RenderFrame() {
     m_state.lastStats = m_state.perf->Sample();
+
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    const double dt = static_cast<double>(now.QuadPart - m_lastFrameQpc.QuadPart) / static_cast<double>(m_qpcFrequency.QuadPart);
+    m_lastFrameQpc = now;
+
+    if (m_state.frameGenLiveEnabled && m_state.frameGenEngine && m_state.testPatternSource) {
+        if (m_state.testPatternSource->Tick(m_state.gpu.Context().Get(), dt)) {
+            m_state.frameGenEngine->GenerateInterpolatedFrame(
+                m_state.testPatternSource->FrameASRV(), m_state.testPatternSource->FrameBSRV());
+        }
+    }
 
     g_uiManager.NewFrame();
     g_uiManager.Draw(m_state);
@@ -152,6 +191,30 @@ int App::Run() {
         RenderFrame();
     }
     return static_cast<int>(msg.wParam);
+}
+
+int App::RunSelfTest() {
+    if (!m_state.frameGenEngine || !m_state.testPatternSource) {
+        Logger::Instance().Error("SelfTest", "Frame Generation Engine or test source not constructed.");
+        return 1;
+    }
+    if (!m_state.frameGenEngine->Capabilities().computeShadersSupported) {
+        Logger::Instance().Error("SelfTest", "Unsupported: " + m_state.frameGenEngine->Capabilities().unsupportedReason);
+        return 1;
+    }
+
+    m_state.frameGenEngine->SetEnabled(true);
+    const auto results = DiagnosticTests::RunAll(*m_state.frameGenEngine, *m_state.testPatternSource,
+                                                  m_state.gpu.Device().Get(), m_state.gpu.Context().Get());
+
+    bool allPassed = true;
+    for (const auto& r : results) {
+        Logger::Instance().Log(r.passed ? LogLevel::Info : LogLevel::Error, "SelfTest",
+                                 (r.passed ? "PASS " : "FAIL ") + r.name + " -- " + r.detail);
+        if (!r.passed) allPassed = false;
+    }
+    Logger::Instance().Info("SelfTest", allPassed ? "All scenarios passed." : "One or more scenarios FAILED.");
+    return allPassed ? 0 : 1;
 }
 
 void App::Shutdown() {

@@ -1,8 +1,125 @@
 #include "Panels.h"
 #include "../../App.h"
+#include "../../framegen/DiagnosticTests.h"
 #include <imgui.h>
+#include <string>
 
 namespace lsalt {
+
+namespace {
+void DrawLiveEngineSection(AppState& state) {
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "Live Frame Generation Engine");
+    ImGui::TextWrapped(
+        "This is a real, working motion-compensated interpolation pipeline (block-matching motion "
+        "estimation + forward/backward warping + occlusion-aware blending) running on the GPU. It has "
+        "nothing to capture from yet -- the Capture Engine (Phase 2) is still an unimplemented stub -- "
+        "so it runs against a synthetic, deterministic test-pattern source instead of a real game.");
+    ImGui::Separator();
+
+    if (!state.frameGenEngine) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Engine failed to construct.");
+        return;
+    }
+
+    const FrameGenCapabilities& caps = state.frameGenEngine->Capabilities();
+    if (!caps.computeShadersSupported) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Unsupported on this GPU/driver:");
+        ImGui::TextWrapped("%s", caps.unsupportedReason.c_str());
+        return;
+    }
+
+    bool liveEnabled = state.frameGenLiveEnabled;
+    if (ImGui::Checkbox("Enable Live Engine", &liveEnabled)) {
+        state.frameGenLiveEnabled = liveEnabled;
+        state.frameGenEngine->SetEnabled(liveEnabled);
+    }
+
+    ImGui::SameLine();
+    {
+        const int activeIdx = state.gpu.ActiveAdapterIndex();
+        std::string gpuLabel = "Auto (see GPU Settings)";
+        if (activeIdx >= 0 && activeIdx < static_cast<int>(state.gpu.Adapters().size())) {
+            const auto& desc = state.gpu.Adapters()[activeIdx].description;
+            gpuLabel = std::string(desc.begin(), desc.end());
+        }
+        ImGui::TextDisabled("Processing GPU: %s (shares the app's UI device)", gpuLabel.c_str());
+    }
+
+    if (!state.testPatternSource) return;
+
+    int scenarioIndex = static_cast<int>(state.testPatternSource->Scenario());
+    const char* scenarioNames[static_cast<int>(TestScenario::Count)];
+    for (int i = 0; i < static_cast<int>(TestScenario::Count); ++i) scenarioNames[i] = ToString(static_cast<TestScenario>(i));
+    if (ImGui::Combo("Test Scenario", &scenarioIndex, scenarioNames, static_cast<int>(TestScenario::Count))) {
+        state.testPatternSource->SetScenario(static_cast<TestScenario>(scenarioIndex));
+    }
+
+    int qualityIndex = static_cast<int>(state.frameGenEngine->QualityMode());
+    const char* qualityNames[] = {"Performance", "Balanced", "Quality"};
+    if (ImGui::Combo("Live Quality Mode", &qualityIndex, qualityNames, IM_ARRAYSIZE(qualityNames))) {
+        state.frameGenEngine->SetQualityMode(static_cast<FrameGenQualityMode>(qualityIndex));
+    }
+
+    float srcFps = static_cast<float>(state.testPatternSource->SourceFps());
+    if (ImGui::SliderFloat("Simulated Source FPS", &srcFps, 5.0f, 60.0f, "%.0f")) {
+        state.testPatternSource->SetSourceFps(srcFps);
+    }
+
+    const FrameGenStats stats = state.frameGenEngine->GetStats();
+    ImGui::Spacing();
+    ImGui::Text("Status: %s", stats.statusText.c_str());
+
+    ImGui::Spacing();
+    if (ImGui::Button("Run Diagnostic Tests (10 scenarios)")) {
+        const bool wasEnabled = state.frameGenLiveEnabled;
+        const TestScenario savedScenario = state.testPatternSource->Scenario();
+        state.frameGenEngine->SetEnabled(true);
+        state.lastDiagnosticsResults = DiagnosticTests::RunAll(*state.frameGenEngine, *state.testPatternSource,
+                                                                 state.gpu.Device().Get(), state.gpu.Context().Get());
+        state.testPatternSource->SetScenario(savedScenario);
+        state.frameGenEngine->SetEnabled(wasEnabled);
+    }
+
+    if (!state.lastDiagnosticsResults.empty()) {
+        ImGui::Spacing();
+        if (ImGui::BeginTable("diag_results", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Test");
+            ImGui::TableSetupColumn("Result");
+            ImGui::TableHeadersRow();
+            for (const auto& r : state.lastDiagnosticsResults) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(r.name.c_str());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextColored(r.passed ? ImVec4(0.4f, 0.9f, 0.4f, 1.0f) : ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                                    "%s", r.passed ? "PASS" : "FAIL");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", r.detail.c_str());
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    if (liveEnabled && state.frameGenEngine->IsEnabled()) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Text("Live Preview (Frame A | Generated A.5 | Frame B)");
+        const ImVec2 thumb(220, 124);
+        if (state.testPatternSource->FrameASRV()) {
+            ImGui::Image(reinterpret_cast<ImTextureID>(state.testPatternSource->FrameASRV()), thumb);
+            ImGui::SameLine();
+        }
+        if (state.frameGenEngine->GeneratedOutputSRV()) {
+            ImGui::Image(reinterpret_cast<ImTextureID>(state.frameGenEngine->GeneratedOutputSRV()), thumb);
+            ImGui::SameLine();
+        }
+        if (state.testPatternSource->FrameBSRV()) {
+            ImGui::Image(reinterpret_cast<ImTextureID>(state.testPatternSource->FrameBSRV()), thumb);
+        }
+    }
+}
+} // namespace
 
 void DrawFrameGenPanel(AppState& state) {
     GameProfile* profilePtr = state.profiles.AtIndex(state.selectedProfileIndex);
@@ -16,9 +133,11 @@ void DrawFrameGenPanel(AppState& state) {
     ImGui::Separator();
 
     ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.2f, 1.0f),
-                        "The interpolation engine is not implemented yet (Phase 4). Enabling this "
-                        "saves the setting for when it lands; it will NOT duplicate frames as a "
-                        "fake substitute.");
+                        "The interpolation engine itself is implemented (real motion-compensated "
+                        "warping, not frame duplication -- try it live below). It cannot run on THIS "
+                        "game yet, though: the Capture Engine (Phase 2) that would hand it real frames "
+                        "is still an unimplemented stub. Enabling this saves the setting for when "
+                        "capture lands.");
     ImGui::Spacing();
 
     ImGui::Checkbox("Enable Frame Generation", &profile.frameGenEnabled);
@@ -60,6 +179,8 @@ void DrawFrameGenPanel(AppState& state) {
     if (ImGui::Button("Save Profile")) {
         state.profiles.AddOrUpdate(profile);
     }
+
+    DrawLiveEngineSection(state);
 }
 
 } // namespace lsalt

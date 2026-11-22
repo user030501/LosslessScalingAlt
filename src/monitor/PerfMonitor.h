@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <deque>
 #include <windows.h>
+#include <pdh.h>
+#include <pdhmsg.h>
 
 namespace lsalt {
 
@@ -20,6 +22,14 @@ struct SystemStats {
     uint64_t processRamBytes = 0;    // this process' working set
     uint64_t vramUsedBytes = 0;      // 0 if unavailable
     uint64_t vramBudgetBytes = 0;    // 0 if unavailable
+
+    // Real GPU "GPU Engine\Utilization Percentage" PDH counter, summed
+    // across all processes' 3D-engine instances system-wide (the same
+    // category Task Manager's GPU graph reads from). Not available on
+    // every driver/OS combination, hence the separate validity flag
+    // instead of silently reporting 0.
+    double gpuUtilPercent = 0.0;
+    bool gpuUtilValid = false;
 };
 
 // Polls Win32/DXGI performance counters on demand (call Sample() once per
@@ -28,12 +38,14 @@ struct SystemStats {
 class PerfMonitor {
 public:
     explicit PerfMonitor(GpuDeviceManager* gpuManager, size_t historyLength = 240);
+    ~PerfMonitor();
 
     SystemStats Sample();
 
     const std::deque<float>& CpuHistory() const { return m_cpuHistory; }
     const std::deque<float>& RamHistory() const { return m_ramHistory; }
     const std::deque<float>& VramHistory() const { return m_vramHistory; }
+    const std::deque<float>& GpuUtilHistory() const { return m_gpuUtilHistory; }
 
 private:
     GpuDeviceManager* m_gpuManager;
@@ -50,8 +62,13 @@ private:
     std::deque<float> m_cpuHistory;
     std::deque<float> m_ramHistory;
     std::deque<float> m_vramHistory;
+    std::deque<float> m_gpuUtilHistory;
 
     void PushHistory(std::deque<float>& history, float value);
+
+    PDH_HQUERY m_gpuQuery = nullptr;
+    PDH_HCOUNTER m_gpuUtilCounter = nullptr;
+    bool m_gpuPdhValid = false;
 };
 
 } // namespace lsalt
