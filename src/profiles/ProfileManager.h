@@ -22,6 +22,10 @@ public:
 
     GameProfile* Find(const std::string& displayName);
     GameProfile* FindByExecutable(const std::string& executableName);
+    // -1 if not found. Lets callers that hold a GameProfile* (e.g. a match
+    // from FindByExecutable) also update AppState::selectedProfileIndex,
+    // which the UI addresses by index rather than by pointer.
+    int IndexOf(const std::string& displayName) const;
 
     void AddOrUpdate(const GameProfile& profile);
     bool Remove(const std::string& displayName); // built-in profiles cannot be removed

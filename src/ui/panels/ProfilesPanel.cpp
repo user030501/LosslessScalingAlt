@@ -10,8 +10,12 @@ namespace lsalt {
 
 namespace {
 // Real, working file picker (no stub): lets the user manually select an
-// executable for "Manual executable selection" from the brief.
-std::string PickExecutableFile(HWND owner) {
+// executable for "Manual executable selection" from the brief. Returns
+// both the bare filename (the match key, GameProfile::executableName) and
+// the full path (display-only, GameProfile::installPath) when picked.
+struct PickedExecutable { std::string name, fullPath; };
+
+PickedExecutable PickExecutableFile(HWND owner) {
     wchar_t fileBuf[MAX_PATH] = L"";
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
@@ -24,7 +28,7 @@ std::string PickExecutableFile(HWND owner) {
 
     if (GetOpenFileNameW(&ofn)) {
         std::filesystem::path p(fileBuf);
-        return p.filename().string();
+        return PickedExecutable{p.filename().string(), p.string()};
     }
     return {};
 }
@@ -80,8 +84,11 @@ void DrawProfilesPanel(AppState& state) {
         }
         ImGui::SameLine();
         if (ImGui::Button("Browse...")) {
-            std::string picked = PickExecutableFile(nullptr);
-            if (!picked.empty()) state.profileEditBuffer.executableName = picked;
+            PickedExecutable picked = PickExecutableFile(nullptr);
+            if (!picked.name.empty()) {
+                state.profileEditBuffer.executableName = picked.name;
+                state.profileEditBuffer.installPath = picked.fullPath;
+            }
         }
 
         ImGui::Spacing();
@@ -101,6 +108,9 @@ void DrawProfilesPanel(AppState& state) {
     } else if (selectedProfile) {
         ImGui::Text("%s", selectedProfile->displayName.c_str());
         ImGui::TextDisabled("Executable: %s", selectedProfile->executableName.c_str());
+        if (!selectedProfile->installPath.empty()) {
+            ImGui::TextDisabled("Install path: %s", selectedProfile->installPath.c_str());
+        }
         ImGui::Separator();
         ImGui::TextWrapped("%s", selectedProfile->notes.c_str());
         ImGui::Spacing();

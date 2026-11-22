@@ -105,6 +105,8 @@ bool App::Initialize(HINSTANCE hInstance) {
     Logger::Instance().SetLevel(m_state.config.Get().logLevel);
     Logger::Instance().Info("App", "Starting LSAlt Phase 1 shell.");
 
+    m_state.gameSession.SetAutoSwitchEnabled(m_state.config.Get().autoProfileSwitchingEnabled);
+
     if (!m_state.gpu.EnumerateAdapters()) {
         Logger::Instance().Error("App", "No DXGI adapters found.");
         return false;
@@ -164,7 +166,18 @@ void App::RenderFrame() {
     LARGE_INTEGER now{};
     QueryPerformanceCounter(&now);
     const double dt = static_cast<double>(now.QuadPart - m_lastFrameQpc.QuadPart) / static_cast<double>(m_qpcFrequency.QuadPart);
+    const double nowSeconds = static_cast<double>(now.QuadPart) / static_cast<double>(m_qpcFrequency.QuadPart);
     m_lastFrameQpc = now;
+
+    // Phase 4: real process detection on its own ~1.5s cadence, not every
+    // rendered frame -- "is a game running" doesn't change at frame rate,
+    // and scanning every frame would be pointless CPU overhead.
+    if (nowSeconds - m_lastDetectionCheckSeconds >= kDetectionIntervalSeconds) {
+        m_lastDetectionCheckSeconds = nowSeconds;
+        m_state.lastGameScan = m_state.gameDetector.Scan();
+        m_state.gameSession.Update(m_state.lastGameScan, m_state.profiles, m_state.frameGenEngine.get(),
+                                     m_state.selectedProfileIndex, m_state.statusMessage);
+    }
 
     if (m_state.frameGenLiveEnabled && m_state.frameGenEngine && m_state.testPatternSource) {
         if (m_state.testPatternSource->Tick(m_state.gpu.Context().Get(), dt)) {
@@ -178,6 +191,27 @@ void App::RenderFrame() {
                 m_state.lastStats.gpuUtilPercent, m_state.lastStats.gpuUtilValid);
             if (!reason.empty()) m_state.lastAutoPerfReason = reason;
         }
+    }
+
+    // Phase 4: performance session history. A session spans however long
+    // Live Engine stays on (that's what actually produces real
+    // FrameGenStats today), labeled with whatever game is currently
+    // auto-detected if any, else clearly marked as the synthetic source.
+    if (m_state.frameGenLiveEnabled && !m_perfHistorySessionWasActive) {
+        const std::string label = m_state.gameSession.HasActiveGame() ? m_state.gameSession.ActiveGameProfileName()
+                                                                         : std::string("(Synthetic Test Source)");
+        m_state.perfHistory.BeginSession(label);
+        m_perfHistorySessionWasActive = true;
+    } else if (!m_state.frameGenLiveEnabled && m_perfHistorySessionWasActive) {
+        m_state.perfHistory.EndSession();
+        m_perfHistorySessionWasActive = false;
+    }
+
+    if (m_state.perfHistory.SessionActive() && m_state.frameGenEngine) {
+        const FrameGenStats fgStats = m_state.frameGenEngine->GetStats();
+        m_state.perfHistory.RecordSample(fgStats.sourceFps, fgStats.displayedFps, fgStats.lastFrameTimeMs,
+                                           m_state.lastStats.vramUsedBytes, m_state.lastStats.gpuUtilPercent,
+                                           m_state.lastStats.gpuUtilValid, fgStats.droppedFrames);
     }
 
     g_uiManager.NewFrame();
@@ -286,8 +320,11 @@ int App::RunSelfTest() {
     }
 
     m_state.frameGenEngine->SetEnabled(true);
-    const auto results = DiagnosticTests::RunAll(*m_state.frameGenEngine, *m_state.testPatternSource,
-                                                  m_state.gpu.Device().Get(), m_state.gpu.Context().Get());
+    auto results = DiagnosticTests::RunAll(*m_state.frameGenEngine, *m_state.testPatternSource,
+                                            m_state.gpu.Device().Get(), m_state.gpu.Context().Get());
+
+    const auto profileResults = ProfileDiagnostics::RunAll(m_state.profiles, *m_state.frameGenEngine);
+    results.insert(results.end(), profileResults.begin(), profileResults.end());
 
     bool allPassed = true;
     for (const auto& r : results) {
@@ -300,6 +337,11 @@ int App::RunSelfTest() {
 }
 
 void App::Shutdown() {
+    if (m_perfHistorySessionWasActive) {
+        m_state.perfHistory.EndSession();
+        m_perfHistorySessionWasActive = false;
+    }
+
     g_uiManager.Shutdown();
 
     AppConfig& cfg = m_state.config.Get();

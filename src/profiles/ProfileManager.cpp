@@ -89,6 +89,13 @@ GameProfile* ProfileManager::FindByExecutable(const std::string& executableName)
     return nullptr;
 }
 
+int ProfileManager::IndexOf(const std::string& displayName) const {
+    for (size_t i = 0; i < m_profiles.size(); ++i) {
+        if (m_profiles[i].displayName == displayName) return static_cast<int>(i);
+    }
+    return -1;
+}
+
 void ProfileManager::AddOrUpdate(const GameProfile& profile) {
     if (GameProfile* existing = Find(profile.displayName)) {
         *existing = profile;

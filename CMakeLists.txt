@@ -21,6 +21,10 @@ add_executable(LSAlt WIN32
     src/monitor/PerfMonitor.cpp
     src/profiles/GameProfile.cpp
     src/profiles/ProfileManager.cpp
+    src/profiles/GameDetector.cpp
+    src/profiles/GameSessionController.cpp
+    src/profiles/PerformanceHistory.cpp
+    src/profiles/ProfileDiagnostics.cpp
     src/framegen/ShaderCompiler.cpp
     src/framegen/MotionEstimator.cpp
     src/framegen/FrameInterpolator.cpp
@@ -34,6 +38,7 @@ add_executable(LSAlt WIN32
     src/ui/panels/HomePanel.cpp
     src/ui/panels/ScalingPanel.cpp
     src/ui/panels/FrameGenPanel.cpp
+    src/ui/panels/GameLibraryPanel.cpp
     src/ui/panels/ProfilesPanel.cpp
     src/ui/panels/MonitorPanel.cpp
     src/ui/panels/GpuSettingsPanel.cpp

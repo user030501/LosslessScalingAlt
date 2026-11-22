@@ -257,8 +257,17 @@ uint32_t FrameGenEngineD3D11::OcclusionMaskHeight() const {
     return m_interpolator ? m_interpolator->OcclusionMaskHeight() : 0;
 }
 
+void FrameGenEngineD3D11::ResetRunningFpsStats() {
+    if (m_pacing) m_pacing->ResetRunningFpsStats();
+}
+
 double FrameGenEngineD3D11::DetectedRefreshHz() const {
     return m_pacing ? m_pacing->DetectedRefreshHz() : 0.0;
+}
+
+const std::deque<float>& FrameGenEngineD3D11::FrameTimeHistoryMs() const {
+    static const std::deque<float> kEmpty;
+    return m_pacing ? m_pacing->FrameTimeHistoryMs() : kEmpty;
 }
 
 FrameGenStats FrameGenEngineD3D11::GetStats() const {

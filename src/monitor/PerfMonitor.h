@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <deque>
+#include <string>
 #include <windows.h>
 #include <pdh.h>
 #include <pdhmsg.h>
@@ -42,6 +43,12 @@ public:
 
     SystemStats Sample();
 
+    // Real CPU model string, read once from the registry at construction
+    // (HARDWARE\DESCRIPTION\System\CentralProcessor\0\ProcessorNameString
+    // -- the same value Windows itself shows in System Information).
+    // Empty if unavailable.
+    const std::string& CpuModel() const { return m_cpuModel; }
+
     const std::deque<float>& CpuHistory() const { return m_cpuHistory; }
     const std::deque<float>& RamHistory() const { return m_ramHistory; }
     const std::deque<float>& VramHistory() const { return m_vramHistory; }
@@ -50,6 +57,7 @@ public:
 private:
     GpuDeviceManager* m_gpuManager;
     size_t m_historyLength;
+    std::string m_cpuModel;
 
     ULARGE_INTEGER m_prevSysIdle{};
     ULARGE_INTEGER m_prevSysKernel{};

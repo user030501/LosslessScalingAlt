@@ -34,6 +34,21 @@ struct GameProfile {
     bool lowGpuOverheadMode = false;
 
     bool isBuiltIn = false; // built-in sample profiles are not user-deletable
+
+    // Phase 4 additions --------------------------------------------------
+    // Full path to the executable, when known (populated by the "Browse..."
+    // file picker, or by automatic detection once a matching process has
+    // actually been seen running). executableName above remains the match
+    // key; this is display-only (Game Library card's "Installation path").
+    std::string installPath;
+    // Unix timestamp (seconds) this profile was last auto-detected as
+    // running, or 0 if never. Display-only ("Last played").
+    int64_t lastPlayedUnixSeconds = 0;
+    // Optional target processing resolution override ("Game resolution").
+    // 0x0 means "native/unset" -- unused until the Capture/Scaling Engines
+    // exist to actually act on it.
+    uint32_t targetResWidth = 0;
+    uint32_t targetResHeight = 0;
 };
 
 void to_json(nlohmann::json& j, const GameProfile& p);

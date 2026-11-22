@@ -22,6 +22,10 @@ void to_json(nlohmann::json& j, const GameProfile& p) {
         {"fpsLimit", p.fpsLimit},
         {"lowGpuOverheadMode", p.lowGpuOverheadMode},
         {"isBuiltIn", p.isBuiltIn},
+        {"installPath", p.installPath},
+        {"lastPlayedUnixSeconds", p.lastPlayedUnixSeconds},
+        {"targetResWidth", p.targetResWidth},
+        {"targetResHeight", p.targetResHeight},
     };
 }
 
@@ -44,6 +48,10 @@ void from_json(const nlohmann::json& j, GameProfile& p) {
     p.fpsLimit = j.value("fpsLimit", 0);
     p.lowGpuOverheadMode = j.value("lowGpuOverheadMode", false);
     p.isBuiltIn = j.value("isBuiltIn", false);
+    p.installPath = j.value("installPath", std::string{});
+    p.lastPlayedUnixSeconds = j.value("lastPlayedUnixSeconds", static_cast<int64_t>(0));
+    p.targetResWidth = j.value("targetResWidth", 0u);
+    p.targetResHeight = j.value("targetResHeight", 0u);
 }
 
 std::vector<GameProfile> BuiltInSampleProfiles() {

@@ -37,7 +37,17 @@ public:
 
     double DetectedRefreshHz() const { return m_refreshHz; }
 
-    void FillStats(FrameGenStats& stats) const;
+    // Phase 4: real per-sample frame-time history for the Performance
+    // Monitor's frame-time graph (same lastFrameTimeMs FillStats already
+    // computes, just retained instead of discarded).
+    const std::deque<float>& FrameTimeHistoryMs() const { return m_frameTimeHistory; }
+
+    // Mutates running avg/min/max tracking (see FillStats), so not const.
+    void FillStats(FrameGenStats& stats);
+    // Phase 4: lets the UI start a fresh avg/min/max window on demand
+    // (e.g. a "Reset Stats" button) without needing a full Reset() of
+    // pacing/timing state.
+    void ResetRunningFpsStats();
 
 private:
     struct TimingSlot {
@@ -71,6 +81,14 @@ private:
 
     double m_lastMotionEstimationMs = 0.0;
     double m_lastInterpolationMs = 0.0;
+
+    uint64_t m_fpsSampleCount = 0;
+    double m_fpsSum = 0.0;
+    double m_fpsMin = 0.0;
+    double m_fpsMax = 0.0;
+
+    std::deque<float> m_frameTimeHistory;
+    static constexpr size_t kFrameTimeHistoryLength = 240;
 };
 
 } // namespace lsalt

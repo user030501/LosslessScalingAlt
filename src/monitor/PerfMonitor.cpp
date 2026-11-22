@@ -13,10 +13,30 @@ uint64_t ToU64(const FILETIME& ft) {
     u.HighPart = ft.dwHighDateTime;
     return u.QuadPart;
 }
+
+std::string QueryCpuModelName() {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", 0, KEY_READ, &key) != ERROR_SUCCESS) {
+        return {};
+    }
+    wchar_t buf[256] = {};
+    DWORD size = sizeof(buf);
+    DWORD type = 0;
+    std::string result;
+    if (RegQueryValueExW(key, L"ProcessorNameString", nullptr, &type, reinterpret_cast<BYTE*>(buf), &size) == ERROR_SUCCESS &&
+        type == REG_SZ) {
+        std::wstring wide(buf);
+        // Trim the registry value's trailing padding/whitespace.
+        while (!wide.empty() && (wide.back() == L'\0' || wide.back() == L' ')) wide.pop_back();
+        result.assign(wide.begin(), wide.end());
+    }
+    RegCloseKey(key);
+    return result;
+}
 } // namespace
 
 PerfMonitor::PerfMonitor(GpuDeviceManager* gpuManager, size_t historyLength)
-    : m_gpuManager(gpuManager), m_historyLength(historyLength) {
+    : m_gpuManager(gpuManager), m_historyLength(historyLength), m_cpuModel(QueryCpuModelName()) {
     if (PdhOpenQueryW(nullptr, 0, &m_gpuQuery) == ERROR_SUCCESS) {
         if (PdhAddEnglishCounterW(m_gpuQuery, L"\\GPU Engine(*)\\Utilization Percentage", 0, &m_gpuUtilCounter) == ERROR_SUCCESS) {
             m_gpuPdhValid = true;

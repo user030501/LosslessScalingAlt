@@ -25,6 +25,7 @@ void to_json(nlohmann::json& j, const AppConfig& c) {
         {"vsync", c.vsync},
         {"fpsLimit", c.fpsLimit},
         {"lastSelectedProfile", c.lastSelectedProfile},
+        {"autoProfileSwitchingEnabled", c.autoProfileSwitchingEnabled},
     };
 }
 
@@ -45,6 +46,7 @@ void from_json(const nlohmann::json& j, AppConfig& c) {
     c.vsync = j.value("vsync", false);
     c.fpsLimit = j.value("fpsLimit", 0);
     c.lastSelectedProfile = j.value("lastSelectedProfile", std::string{});
+    c.autoProfileSwitchingEnabled = j.value("autoProfileSwitchingEnabled", true);
 }
 
 namespace {

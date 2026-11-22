@@ -14,10 +14,12 @@ struct NavItem {
     void (*draw)(AppState&);
 };
 
+// Order here must match the NavPanel enum in Panels.h.
 const NavItem kNavItems[] = {
     {"Home", &DrawHomePanel},
     {"Scaling", &DrawScalingPanel},
     {"Frame Generation", &DrawFrameGenPanel},
+    {"Game Library", &DrawGameLibraryPanel},
     {"Game Profiles", &DrawProfilesPanel},
     {"Performance Monitor", &DrawMonitorPanel},
     {"GPU Settings", &DrawGpuSettingsPanel},

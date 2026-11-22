@@ -1,5 +1,6 @@
 #include "FramePacing.h"
 #include "../core/Logger.h"
+#include <algorithm>
 
 namespace lsalt {
 
@@ -158,7 +159,14 @@ void FramePacing::PollOldestTiming(ID3D11DeviceContext* context) {
     m_timingReadIndex = (m_timingReadIndex + 1) % kTimingSlotCount;
 }
 
-void FramePacing::FillStats(FrameGenStats& stats) const {
+void FramePacing::ResetRunningFpsStats() {
+    m_fpsSampleCount = 0;
+    m_fpsSum = 0.0;
+    m_fpsMin = 0.0;
+    m_fpsMax = 0.0;
+}
+
+void FramePacing::FillStats(FrameGenStats& stats) {
     stats.sourceFps = RateInWindow(m_sourceTimestamps, 1.0);
     stats.generatedFps = RateInWindow(m_generatedTimestamps, 1.0);
     stats.displayedFps = RateInWindow(m_displayedTimestamps, 1.0);
@@ -179,6 +187,27 @@ void FramePacing::FillStats(FrameGenStats& stats) const {
         if (slot.pending) ++pending;
     }
     stats.queueDepth = pending;
+
+    // Running avg/min/max over samples where something was actually being
+    // displayed -- skipping zero-fps idle samples so these reflect "while
+    // running", not a mix dominated by idle periods (GetStats() is called
+    // every UI frame regardless of whether Live Engine is on).
+    if (stats.displayedFps > 0.01) {
+        if (m_fpsSampleCount == 0) {
+            m_fpsMin = m_fpsMax = stats.displayedFps;
+        } else {
+            m_fpsMin = std::min(m_fpsMin, stats.displayedFps);
+            m_fpsMax = std::max(m_fpsMax, stats.displayedFps);
+        }
+        m_fpsSum += stats.displayedFps;
+        ++m_fpsSampleCount;
+
+        m_frameTimeHistory.push_back(static_cast<float>(stats.lastFrameTimeMs));
+        while (m_frameTimeHistory.size() > kFrameTimeHistoryLength) m_frameTimeHistory.pop_front();
+    }
+    stats.avgDisplayedFpsRunning = (m_fpsSampleCount > 0) ? (m_fpsSum / static_cast<double>(m_fpsSampleCount)) : 0.0;
+    stats.minDisplayedFpsRunning = m_fpsMin;
+    stats.maxDisplayedFpsRunning = m_fpsMax;
 }
 
 } // namespace lsalt

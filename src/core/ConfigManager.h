@@ -30,6 +30,12 @@ struct AppConfig {
     int fpsLimit = 0;
 
     std::string lastSelectedProfile;
+
+    // Phase 4: real process-based game detection (see GameDetector/
+    // GameSessionController) can automatically apply a matching profile's
+    // Frame Generation settings and switch the UI's selected profile. On
+    // by default; the brief explicitly requires a way to turn it off.
+    bool autoProfileSwitchingEnabled = true;
 };
 
 void to_json(nlohmann::json& j, const AppConfig& c);

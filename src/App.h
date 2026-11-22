@@ -16,6 +16,10 @@
 #include "framegen/DiagnosticTests.h"
 #include "framegen/ThermalMonitor.h"
 #include "framegen/DynamicPerformanceManager.h"
+#include "profiles/GameDetector.h"
+#include "profiles/GameSessionController.h"
+#include "profiles/PerformanceHistory.h"
+#include "profiles/ProfileDiagnostics.h"
 
 namespace lsalt {
 
@@ -55,6 +59,18 @@ struct AppState {
     std::unique_ptr<DynamicPerformanceManager> dynamicPerfManager;
     ThermalSample lastThermalSample;
     std::string lastAutoPerfReason; // most recent automatic change, for the UI
+
+    // Phase 4: real process-based game detection, automatic profile
+    // switching, and performance session history. See GameDetector.h /
+    // GameSessionController.h / PerformanceHistory.h for exactly what is
+    // and isn't real here (detection and switching are genuinely real;
+    // "applying a profile" only ever changes this app's own settings,
+    // never a detected game's actual rendering -- Capture Engine is still
+    // an unimplemented stub).
+    GameDetector gameDetector;
+    GameSessionController gameSession;
+    PerformanceHistory perfHistory;
+    std::vector<DetectedProcess> lastGameScan;
 };
 
 // Owns the Win32 window, D3D11 swapchain and the ImGui frame lifecycle.
@@ -102,6 +118,13 @@ private:
     bool m_running = false;
     LARGE_INTEGER m_qpcFrequency{};
     LARGE_INTEGER m_lastFrameQpc{};
+
+    // Phase 4: process detection runs on its own real-time (not frame-rate)
+    // cadence -- enumerating processes every rendered frame would add real,
+    // pointless CPU overhead for information that doesn't change that fast.
+    double m_lastDetectionCheckSeconds = -1000.0;
+    static constexpr double kDetectionIntervalSeconds = 1.5;
+    bool m_perfHistorySessionWasActive = false;
 };
 
 } // namespace lsalt

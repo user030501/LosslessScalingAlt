@@ -6,10 +6,37 @@
 #include <deque>
 #include <string>
 #include <cstdio>
+#include <algorithm>
+#include <commdlg.h>
+#include <filesystem>
+#include <ctime>
 
 namespace lsalt {
 
 namespace {
+std::wstring PickCsvSavePath() {
+    wchar_t fileBuf[MAX_PATH] = L"lsalt_session_history.csv";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.lpstrFilter = L"CSV Files (*.csv)\0*.csv\0All Files\0*.*\0";
+    ofn.lpstrFile = fileBuf;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"csv";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    ofn.lpstrTitle = L"Export Performance Session History";
+    if (GetSaveFileNameW(&ofn)) return fileBuf;
+    return {};
+}
+
+std::string FormatSessionDate(int64_t unixSeconds) {
+    const std::time_t t = static_cast<std::time_t>(unixSeconds);
+    std::tm local{};
+    if (localtime_s(&local, &t) != 0) return "Unknown";
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &local);
+    return buf;
+}
+
 void PlotHistory(const char* label, const std::deque<float>& history, const char* overlay) {
     if (history.empty()) {
         ImGui::TextDisabled("%s: no data yet", label);
@@ -28,6 +55,8 @@ void DrawMonitorPanel(AppState& state) {
                         "Frame-Generation engines (Phase 2-4) are attached to a running game.");
     ImGui::Separator();
 
+    ImGui::Text("CPU: %s", state.perf->CpuModel().empty() ? "N/A (not readable from the registry on this system)" : state.perf->CpuModel().c_str());
+
     char cpuOverlay[64];
     snprintf(cpuOverlay, sizeof(cpuOverlay), "%.1f%%", state.lastStats.systemCpuPercent);
     PlotHistory("CPU Utilization", state.perf->CpuHistory(), cpuOverlay);
@@ -38,6 +67,7 @@ void DrawMonitorPanel(AppState& state) {
     char ramOverlay[64];
     snprintf(ramOverlay, sizeof(ramOverlay), "%.1f%%", ramPercent);
     PlotHistory("RAM Utilization", state.perf->RamHistory(), ramOverlay);
+    ImGui::TextDisabled("This application's memory use: %.0f MB", state.lastStats.processRamBytes / (1024.0 * 1024.0));
 
     const double vramPercent = state.lastStats.vramBudgetBytes > 0
         ? (static_cast<double>(state.lastStats.vramUsedBytes) / state.lastStats.vramBudgetBytes) * 100.0
@@ -115,6 +145,31 @@ void DrawMonitorPanel(AppState& state) {
 
     if (liveRunning) {
         ImGui::Spacing();
+        ImGui::Columns(3, "fg_cols_minmax", false);
+        ImGui::Text("Avg Displayed FPS"); ImGui::Text("%.1f", fgStats.avgDisplayedFpsRunning);
+        ImGui::NextColumn();
+        ImGui::Text("Min Displayed FPS"); ImGui::Text("%.1f", fgStats.minDisplayedFpsRunning);
+        ImGui::NextColumn();
+        ImGui::Text("Max Displayed FPS"); ImGui::Text("%.1f", fgStats.maxDisplayedFpsRunning);
+        ImGui::Columns(1);
+        if (ImGui::SmallButton("Reset Stats")) {
+            state.frameGenEngine->ResetRunningFpsStats();
+        }
+
+        {
+            const auto& ftHistory = state.frameGenEngine->FrameTimeHistoryMs();
+            if (!ftHistory.empty()) {
+                std::vector<float> buf(ftHistory.begin(), ftHistory.end());
+                char overlay[64];
+                snprintf(overlay, sizeof(overlay), "%.2f ms", fgStats.lastFrameTimeMs);
+                ImGui::Text("Frame Time (ms)");
+                const float maxMs = *std::max_element(buf.begin(), buf.end());
+                ImGui::PlotLines("##frametime", buf.data(), static_cast<int>(buf.size()), 0, overlay, 0.0f,
+                                  std::max(maxMs * 1.2f, 1.0f), ImVec2(-1, 80));
+            }
+        }
+
+        ImGui::Spacing();
         ImGui::Columns(3, "fg_cols", false);
         ImGui::Text("Frame Time");         ImGui::Text("%.2f ms", fgStats.lastFrameTimeMs);
         ImGui::NextColumn();
@@ -149,6 +204,65 @@ void DrawMonitorPanel(AppState& state) {
         } else if (!state.lastAutoPerfReason.empty()) {
             ImGui::Spacing();
             ImGui::TextDisabled("Last automatic change: %s", state.lastAutoPerfReason.c_str());
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "Session History");
+
+    if (state.perfHistory.SessionActive()) {
+        ImGui::Text("Recording session: %s (%.0fs so far)", state.perfHistory.CurrentSessionGameName().c_str(),
+                    state.perfHistory.CurrentSessionDurationSeconds());
+    } else {
+        ImGui::TextDisabled("Not currently recording -- a session runs for as long as the Live Engine "
+                             "(Frame Generation tab) is enabled.");
+    }
+
+    const auto& records = state.perfHistory.Records();
+    if (!records.empty()) {
+        if (ImGui::BeginTable("session_history", 8,
+                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+                               ImVec2(0, 160))) {
+            ImGui::TableSetupColumn("Game");
+            ImGui::TableSetupColumn("Date");
+            ImGui::TableSetupColumn("Duration");
+            ImGui::TableSetupColumn("Avg Source FPS");
+            ImGui::TableSetupColumn("Avg Displayed FPS");
+            ImGui::TableSetupColumn("Peak VRAM");
+            ImGui::TableSetupColumn("Avg GPU Util");
+            ImGui::TableSetupColumn("Dropped");
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableHeadersRow();
+            for (auto it = records.rbegin(); it != records.rend(); ++it) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(it->gameName.c_str());
+                ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(FormatSessionDate(it->startUnixSeconds).c_str());
+                ImGui::TableSetColumnIndex(2); ImGui::Text("%.0fs", it->durationSeconds);
+                ImGui::TableSetColumnIndex(3); ImGui::Text("%.1f", it->avgSourceFps);
+                ImGui::TableSetColumnIndex(4); ImGui::Text("%.1f", it->avgDisplayedFps);
+                ImGui::TableSetColumnIndex(5); ImGui::Text("%.0f MB", it->peakVramUsedBytes / (1024.0 * 1024.0));
+                ImGui::TableSetColumnIndex(6);
+                if (it->gpuUtilEverValid) ImGui::Text("%.0f%%", it->avgGpuUtilPercent); else ImGui::TextDisabled("N/A");
+                ImGui::TableSetColumnIndex(7); ImGui::Text("%llu", static_cast<unsigned long long>(it->droppedFrames));
+            }
+            ImGui::EndTable();
+        }
+    } else {
+        ImGui::TextDisabled("No completed sessions yet.");
+    }
+
+    ImGui::Spacing();
+    if (ImGui::Button("Export CSV...")) {
+        const std::wstring path = PickCsvSavePath();
+        if (!path.empty()) {
+            state.perfHistory.ExportCsv(path);
+        }
+    }
+    ImGui::SameLine();
+    if (!records.empty()) {
+        if (ImGui::Button("Clear History")) {
+            state.perfHistory.ClearHistory();
         }
     }
 }

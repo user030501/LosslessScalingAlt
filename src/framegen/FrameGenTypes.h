@@ -50,6 +50,13 @@ struct FrameGenStats {
     uint64_t framesGenerated = 0;
     uint64_t droppedFrames = 0;
     uint64_t queueDepth = 0;
+
+    // Phase 4: running avg/min/max of displayedFps since the engine was
+    // last (re)enabled -- real incremental statistics over the same real
+    // per-sample displayedFps value above, not a separate estimate.
+    double avgDisplayedFpsRunning = 0.0;
+    double minDisplayedFpsRunning = 0.0;
+    double maxDisplayedFpsRunning = 0.0;
     bool engineActive = false;
     std::string statusText;
 

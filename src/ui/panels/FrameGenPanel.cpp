@@ -90,7 +90,7 @@ void DrawLiveEngineSection(AppState& state) {
     }
 
     ImGui::Spacing();
-    if (ImGui::Button("Run Diagnostic Tests (10 scenarios)")) {
+    if (ImGui::Button("Run Diagnostic Tests (14 scenarios)")) {
         const bool wasEnabled = state.frameGenLiveEnabled;
         const TestScenario savedScenario = state.testPatternSource->Scenario();
         state.frameGenEngine->SetEnabled(true);

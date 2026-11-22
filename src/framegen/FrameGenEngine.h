@@ -1,6 +1,7 @@
 #pragma once
 #include <wrl/client.h>
 #include <d3d11.h>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <string>
@@ -62,6 +63,9 @@ public:
 
     const FrameGenCapabilities& Capabilities() const override { return m_capabilities; }
     FrameGenStats GetStats() const override;
+    // Phase 4: starts a fresh avg/min/max displayed-FPS window (e.g. a
+    // "Reset Stats" button), without touching any other pacing/timing state.
+    void ResetRunningFpsStats();
     bool IsEnabled() const override { return m_enabled && m_capabilities.computeShadersSupported; }
 
     FrameGenMultiplier Multiplier() const { return m_multiplier; }
@@ -90,6 +94,7 @@ public:
     uint32_t OcclusionMaskWidth() const;
     uint32_t OcclusionMaskHeight() const;
     double DetectedRefreshHz() const;
+    const std::deque<float>& FrameTimeHistoryMs() const;
 
 private:
     bool DetectCapabilities(ID3D11Device* device);
