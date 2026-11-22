@@ -34,10 +34,11 @@ void DrawHomePanel(AppState& state) {
     if (!canStart) ImGui::BeginDisabled();
     if (ImGui::Button("Start Scaling", ImVec2(160, 36))) {
         state.scalingActive = true;
-        state.statusMessage = "Marked as running, but no frames are being captured or processed yet: "
-                               "the Capture Engine (Phase 2), Scaling Engine (Phase 3) and Frame "
-                               "Generation Engine (Phase 4) are not implemented in this build.";
-        Logger::Instance().Info("UI", "Start Scaling pressed (no-op until Phase 2-4 land).");
+        state.statusMessage = "This toggle is UI-only status; it doesn't start anything by itself. Real "
+                               "capture/scaling/frame-generation are each started explicitly: Game Library "
+                               "tab -> \"Capture\" a running window, then Frame Generation tab -> \"Enable "
+                               "Live Engine\" to run real interpolation on it.";
+        Logger::Instance().Info("UI", "Start Scaling pressed (UI status flag only; see Game Library/Frame Generation tabs for the real controls).");
     }
     if (!canStart) ImGui::EndDisabled();
 

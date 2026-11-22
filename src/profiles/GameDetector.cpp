@@ -4,7 +4,7 @@
 #include <tlhelp32.h>
 #include <psapi.h>
 #include <algorithm>
-#include <unordered_set>
+#include <unordered_map>
 
 namespace lsalt {
 
@@ -23,7 +23,7 @@ std::string NarrowFromWide(const std::wstring& w) {
 // another window (an owned window is a dialog/popup of some other
 // top-level window, not itself the thing to track).
 BOOL CALLBACK CollectWindowOwningPids(HWND hwnd, LPARAM lParam) {
-    auto* pids = reinterpret_cast<std::unordered_set<DWORD>*>(lParam);
+    auto* pidToWindow = reinterpret_cast<std::unordered_map<DWORD, HWND>*>(lParam);
     if (!IsWindowVisible(hwnd)) return TRUE;
     if (GetWindow(hwnd, GW_OWNER) != nullptr) return TRUE;
     if (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) return TRUE;
@@ -34,7 +34,10 @@ BOOL CALLBACK CollectWindowOwningPids(HWND hwnd, LPARAM lParam) {
 
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
-    if (pid != 0) pids->insert(pid);
+    // EnumWindows visits top-level windows in Z-order (topmost first), so
+    // the first window found for a given PID is kept -- a reasonable
+    // "main window" heuristic for processes that own more than one.
+    if (pid != 0) pidToWindow->emplace(pid, hwnd);
     return TRUE;
 }
 
@@ -55,7 +58,7 @@ std::string QueryProcessExecutablePath(DWORD pid) {
 std::vector<DetectedProcess> GameDetector::Scan() const {
     std::vector<DetectedProcess> result;
 
-    std::unordered_set<DWORD> windowOwningPids;
+    std::unordered_map<DWORD, HWND> windowOwningPids;
     EnumWindows(CollectWindowOwningPids, reinterpret_cast<LPARAM>(&windowOwningPids));
     if (windowOwningPids.empty()) return result;
 
@@ -74,13 +77,15 @@ std::vector<DetectedProcess> GameDetector::Scan() const {
     entry.dwSize = sizeof(entry);
     if (Process32FirstW(snapshot, &entry)) {
         do {
-            if (windowOwningPids.find(entry.th32ProcessID) == windowOwningPids.end()) continue;
+            const auto it = windowOwningPids.find(entry.th32ProcessID);
+            if (it == windowOwningPids.end()) continue;
 
             DetectedProcess proc;
             proc.processId = entry.th32ProcessID;
             proc.executableName = NarrowFromWide(entry.szExeFile);
             proc.executablePath = QueryProcessExecutablePath(entry.th32ProcessID);
             proc.isForegroundWindow = (entry.th32ProcessID == foregroundPid);
+            proc.windowHandle = it->second;
             result.push_back(std::move(proc));
         } while (Process32NextW(snapshot, &entry));
     }

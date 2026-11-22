@@ -26,12 +26,56 @@ std::string FormatLastPlayed(int64_t unixSeconds) {
 }
 } // namespace
 
+namespace {
+const DetectedProcess* FindDetected(AppState& state, const GameProfile& p) {
+    for (const auto& d : state.lastGameScan) {
+        if (IEquals(d.executableName, p.executableName)) return &d;
+    }
+    return nullptr;
+}
+} // namespace
+
 void DrawGameLibraryPanel(AppState& state) {
     ImGui::TextWrapped(
-        "Real, read-only process detection (no capture, no injection, no memory access beyond a running "
-        "process' own executable path -- see docs/ARCHITECTURE.md). Detecting a game and applying its "
-        "profile only changes this app's own Frame Generation Engine settings; it does not yet capture or "
-        "process that game's actual rendered frames (the Capture Engine remains an unimplemented stub).");
+        "Real, read-only process detection (no injection, no memory access beyond a running process' own "
+        "executable path) plus real window capture via Windows Graphics Capture -- the same OS mechanism "
+        "behind Xbox Game Bar/OBS/Teams screen share. No anti-cheat is touched or bypassed.");
+    ImGui::Separator();
+
+    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "Real Window Capture");
+    if (state.captureEngine && state.captureEngine->IsCapturing()) {
+        uint32_t cw = 0, ch = 0;
+        state.captureEngine->GetFrameSize(cw, ch);
+        ImGui::Text("Capturing: %s (%ux%u)", state.captureEngine->TargetWindowTitle().c_str(), cw, ch);
+        if (ImGui::Button("Stop Capture")) state.captureEngine->StopCapture();
+        ImGui::SliderFloat("Capture Upscale %", &state.captureScalePercent, 50.0f, 300.0f, "%.0f%%");
+        if (state.captureEngine->LatestFrameSRV()) {
+            ImGui::Text("Live Preview (real captured window)");
+            ImGui::Image(reinterpret_cast<ImTextureID>(state.captureEngine->LatestFrameSRV()), ImVec2(320, 180));
+        }
+        if (state.scalingEngine && state.scalingEngine->OutputSRV()) {
+            ImGui::SameLine();
+            ImGui::BeginGroup();
+            ImGui::Text("Scaled Output");
+            ImGui::Image(reinterpret_cast<ImTextureID>(state.scalingEngine->OutputSRV()), ImVec2(320, 180));
+            ImGui::EndGroup();
+        }
+        ImGui::TextWrapped("Enable Live Engine on the Frame Generation tab to also run real motion-compensated "
+                            "interpolation on these real captured+scaled frames.");
+    } else if (!CaptureEngineWGC::IsSupportedOnThisSystem()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Windows Graphics Capture is not supported on this OS build.");
+    } else {
+        ImGui::TextDisabled("Not capturing. Click \"Capture\" on a RUNNING game card below, or capture this app's "
+                             "own window to try it immediately.");
+        if (ImGui::Button("Capture This App's Own Window (demo)") && state.captureEngine) {
+            state.captureEngine->StartCaptureWindow(GetForegroundWindow());
+        }
+        if (state.captureEngine && !state.captureEngine->LastError().empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f), "Last capture error: %s", state.captureEngine->LastError().c_str());
+        }
+    }
+
+    ImGui::Spacing();
     ImGui::Separator();
 
     bool autoSwitch = state.gameSession.AutoSwitchEnabled();
@@ -64,8 +108,8 @@ void DrawGameLibraryPanel(AppState& state) {
         const GameProfile& p = profiles[i];
         ImGui::PushID(i);
 
-        const bool detected = std::any_of(state.lastGameScan.begin(), state.lastGameScan.end(),
-                                           [&](const DetectedProcess& d) { return IEquals(d.executableName, p.executableName); });
+        const DetectedProcess* detectedProc = FindDetected(state, p);
+        const bool detected = detectedProc != nullptr;
         const bool isActiveProfile = state.gameSession.HasActiveGame() && state.gameSession.ActiveGameProfileName() == p.displayName;
 
         ImGui::BeginChild("card", ImVec2(0, 112), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
@@ -97,6 +141,12 @@ void DrawGameLibraryPanel(AppState& state) {
             state.selectedProfileIndex = i;
             state.isAddingNewProfile = false;
             state.activePanel = static_cast<int>(NavPanel::FrameGeneration);
+        }
+        if (detected && detectedProc->windowHandle && state.captureEngine && CaptureEngineWGC::IsSupportedOnThisSystem()) {
+            ImGui::SameLine();
+            if (ImGui::Button("Capture")) {
+                state.captureEngine->StartCaptureWindow(detectedProc->windowHandle);
+            }
         }
         if (!p.isBuiltIn) {
             ImGui::SameLine();

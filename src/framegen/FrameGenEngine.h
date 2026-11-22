@@ -63,6 +63,13 @@ public:
 
     const FrameGenCapabilities& Capabilities() const override { return m_capabilities; }
     FrameGenStats GetStats() const override;
+
+    // Phase 5: call once per real IDXGISwapChain::Present() call, while
+    // Live Engine is active, right after Present() succeeds -- this is
+    // what FrameGenStats::displayedFps now measures. See FrameGenTypes.h's
+    // comment on displayedFps for exactly what this does and doesn't
+    // represent (this app's own present cadence, not a captured game's).
+    void RecordPresentedFrame();
     // Phase 4: starts a fresh avg/min/max displayed-FPS window (e.g. a
     // "Reset Stats" button), without touching any other pacing/timing state.
     void ResetRunningFpsStats();

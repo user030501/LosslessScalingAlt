@@ -170,7 +170,19 @@ void FramePacing::FillStats(FrameGenStats& stats) {
     stats.sourceFps = RateInWindow(m_sourceTimestamps, 1.0);
     stats.generatedFps = RateInWindow(m_generatedTimestamps, 1.0);
     stats.displayedFps = RateInWindow(m_displayedTimestamps, 1.0);
-    stats.lastFrameTimeMs = stats.displayedFps > 0.0 ? 1000.0 / stats.displayedFps : 0.0;
+
+    // Phase 5 fix: this used to be derived from displayedFps (1000/displayedFps),
+    // which was itself a derived (3x generatedFps) number -- a double
+    // derivation masquerading as a measurement. Now that displayedFps is
+    // an independent real measurement of THIS APP'S OWN present cadence
+    // (see FrameGenTypes.h), deriving frame time from it would make "Frame
+    // Time" track vsync/UI refresh rate instead of actual content
+    // production rate. Base it on generatedFps (falling back to
+    // sourceFps) instead -- the real interval between successive pieces
+    // of new content, independent of how often this app's own window
+    // happens to present.
+    const double contentFps = (stats.generatedFps > 0.0) ? stats.generatedFps : stats.sourceFps;
+    stats.lastFrameTimeMs = contentFps > 0.0 ? 1000.0 / contentFps : 0.0;
     stats.motionEstimationGpuMs = m_lastMotionEstimationMs;
     stats.interpolationGpuMs = m_lastInterpolationMs;
     stats.totalGpuMs = m_lastMotionEstimationMs + m_lastInterpolationMs;

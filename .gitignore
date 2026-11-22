@@ -1,5 +1,7 @@
 build/
 out/
+dist/
+packaging/output/
 vcpkg/
 vcpkg_installed/
 *.user

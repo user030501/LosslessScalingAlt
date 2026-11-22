@@ -41,8 +41,18 @@ struct FrameGenCapabilities {
 
 struct FrameGenStats {
     double sourceFps = 0.0;          // rate real frame pairs are arriving at
-    double generatedFps = 0.0;       // output rate including interpolated frames
-    double displayedFps = 0.0;       // rate frames were actually consumed by a presenter
+    double generatedFps = 0.0;       // rate of successfully-produced interpolated frames
+
+    // Phase 5: an independent measurement, not generatedFps*3 (that was
+    // the bug this field used to have). Driven by
+    // FrameGenEngineD3D11::RecordPresentedFrame(), called once per real
+    // IDXGISwapChain::Present() call in App::RenderFrame while Live Engine
+    // is active. Read literally: this is how often THIS APPLICATION'S OWN
+    // window presents while generation is running, not a captured game's
+    // displayed-frame rate -- there is no real per-game presenter yet
+    // (that needs the Capture Engine). It is still a real, independently
+    // measured number, not a derived/estimated one.
+    double displayedFps = 0.0;
     double lastFrameTimeMs = 0.0;
     double motionEstimationGpuMs = 0.0;
     double interpolationGpuMs = 0.0;

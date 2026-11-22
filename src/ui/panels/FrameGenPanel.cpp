@@ -13,9 +13,11 @@ void DrawLiveEngineSection(AppState& state) {
     ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "Live Frame Generation Engine");
     ImGui::TextWrapped(
         "This is a real, working motion-compensated interpolation pipeline (block-matching motion "
-        "estimation + forward/backward warping + occlusion-aware blending) running on the GPU. It has "
-        "nothing to capture from yet -- the Capture Engine (Phase 2) is still an unimplemented stub -- "
-        "so it runs against a synthetic, deterministic test-pattern source instead of a real game.");
+        "estimation + forward/backward warping + occlusion-aware blending) running on the GPU. Below, this "
+        "toggle runs it against a synthetic, deterministic test-pattern source for controlled testing; to "
+        "run it against a real captured window instead, use the Game Library tab's \"Capture\" button -- "
+        "while a real capture is active, enabling Live Engine here runs this same pipeline on those real "
+        "captured (and scaled) frames instead of the synthetic source.");
     ImGui::Separator();
 
     if (!state.frameGenEngine) {
@@ -152,10 +154,10 @@ void DrawFrameGenPanel(AppState& state) {
 
     ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.2f, 1.0f),
                         "The interpolation engine itself is implemented (real motion-compensated "
-                        "warping, not frame duplication -- try it live below). It cannot run on THIS "
-                        "game yet, though: the Capture Engine (Phase 2) that would hand it real frames "
-                        "is still an unimplemented stub. Enabling this saves the setting for when "
-                        "capture lands.");
+                        "warping, not frame duplication -- try it live below). This setting is applied "
+                        "automatically if this game is auto-detected running (Game Library tab); actually "
+                        "capturing and processing its frames still requires manually starting capture on "
+                        "it from the Game Library tab.");
     ImGui::Spacing();
 
     ImGui::Checkbox("Enable Frame Generation", &profile.frameGenEnabled);

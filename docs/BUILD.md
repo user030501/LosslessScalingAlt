@@ -52,14 +52,25 @@ it creates:
   Valorant / GTA V / ROS Legacy / Roblox samples)
 - `%LOCALAPPDATA%\LSAlt\logs\lsalt.log` - log file
 
-## What to expect in this Phase 1 build
+## What to expect in this build
 
-- A real, resizable, dark-themed window with 8 navigable sections.
+- A real, resizable, dark-themed window with 9 navigable sections.
 - Real GPU list (your NVIDIA MX150 and Intel UHD 620 should both show up
-  under "GPU Settings"), real CPU/RAM/VRAM graphs under "Performance
-  Monitor".
+  under "GPU Settings", with real capability flags and an auto-selection
+  explanation), real CPU/RAM/VRAM/GPU-utilization/CPU-temperature graphs
+  under "Performance Monitor".
 - Game profile CRUD that persists to disk, with a working "Browse..." file
-  picker for manual executable selection.
-- "Start Scaling" / "Stop Scaling" on Home toggle a UI state only - no
-  game is captured, scaled or frame-interpolated yet. That is explicit by
-  design (see `docs/ARCHITECTURE.md`'s phase table) rather than faked.
+  picker for manual executable selection, plus real process-based game
+  detection and automatic profile switching under "Game Library".
+- Real image scaling (Nearest/Bilinear/Bicubic/Lanczos/Integer Scale) and
+  real motion-compensated frame generation (2x), each runnable live
+  against either a synthetic test source (for controlled testing) or a
+  real captured window (Game Library tab → "Capture").
+- "Start Scaling" on Home is a UI-only status flag (it says so) — the real
+  controls for capture/scaling/frame-generation live on their own tabs.
+- Run `LSAlt.exe --selftest` to run the full automated diagnostic suite
+  (27 scenarios) headlessly; it exits 0 if everything passes.
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for what's implemented versus
+known limitations, and [`INSTALLATION.md`](INSTALLATION.md) for portable/
+installer packaging.

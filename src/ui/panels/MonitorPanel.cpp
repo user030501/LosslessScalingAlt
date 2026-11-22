@@ -123,14 +123,20 @@ void DrawMonitorPanel(AppState& state) {
 
     const bool liveRunning = state.frameGenEngine && state.frameGenEngine->IsEnabled();
     const FrameGenStats fgStats = state.frameGenEngine ? state.frameGenEngine->GetStats() : FrameGenStats{};
+    const bool capturingReal = state.captureEngine && state.captureEngine->IsCapturing();
 
-    ImGui::TextWrapped(liveRunning
-        ? "Frame Generation live-engine metrics below are real, measured numbers from the synthetic "
-          "test-pattern source (see the Frame Generation tab) -- there is still no real game attached "
-          "(Capture Engine is Phase 2, not implemented)."
-        : "Per-game FPS, frame time and \"generated FPS\" stay blank until the Capture Engine (Phase 2) "
-          "is attached to a running game. Enable the Frame Generation tab's Live Engine for real "
-          "synthetic-source metrics in the meantime.");
+    if (liveRunning && capturingReal) {
+        ImGui::TextWrapped("Frame Generation live-engine metrics below are real, measured numbers from a REAL "
+                            "captured window (%s) -- see the Game Library tab.", state.captureEngine->TargetWindowTitle().c_str());
+    } else if (liveRunning) {
+        ImGui::TextWrapped("Frame Generation live-engine metrics below are real, measured numbers from the "
+                            "synthetic test-pattern source (see the Frame Generation tab). Start a real "
+                            "capture from the Game Library tab to see these same real metrics against an "
+                            "actual captured window instead.");
+    } else {
+        ImGui::TextWrapped("These fields stay blank until the Frame Generation tab's Live Engine is enabled, "
+                            "either against the synthetic test source or (Game Library tab) a real captured window.");
+    }
 
     ImGui::Columns(3, "fps_cols", false);
     ImGui::Text("Source (Original) FPS");
@@ -141,6 +147,12 @@ void DrawMonitorPanel(AppState& state) {
     ImGui::NextColumn();
     ImGui::Text("Displayed FPS");
     if (liveRunning) ImGui::Text("%.1f", fgStats.displayedFps); else ImGui::TextDisabled("N/A (Phase 2)");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Real, independent measurement of THIS APP'S OWN window present rate while Live "
+                           "Engine is on (tied to actual IDXGISwapChain::Present calls) -- not a derived "
+                           "multiple of Generated FPS. It is a stand-in for a captured game's actual displayed-"
+                           "frame rate, which needs the Capture Engine's own presenter to measure for real.");
+    }
     ImGui::Columns(1);
 
     if (liveRunning) {

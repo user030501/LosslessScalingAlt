@@ -11,6 +11,10 @@
 #include "gpu/GpuDeviceManager.h"
 #include "monitor/PerfMonitor.h"
 #include "profiles/GameProfile.h"
+#include "scaling/ScalingEngine.h"
+#include "scaling/ScalingDiagnostics.h"
+#include "capture/CaptureEngineWGC.h"
+#include "capture/CaptureDiagnostics.h"
 #include "framegen/FrameGenEngine.h"
 #include "framegen/TestPatternSource.h"
 #include "framegen/DiagnosticTests.h"
@@ -49,6 +53,21 @@ struct AppState {
     std::unique_ptr<FrameGenEngineD3D11> frameGenEngine;
     std::unique_ptr<TestPatternSource> testPatternSource;
     bool frameGenLiveEnabled = false;
+
+    // Phase 5: a real Image Scaling Engine (compute-shader Nearest/
+    // Bilinear/Bicubic/Lanczos/Integer Scale with real aspect-ratio
+    // letterboxing). Exercised against the same synthetic animated source
+    // as Frame Generation until the Capture Engine exists.
+    std::unique_ptr<ScalingEngineD3D11> scalingEngine;
+    bool scalingLiveEnabled = false;
+
+    // Phase 5: real Windows Graphics Capture. When IsCapturing() is true,
+    // App::RenderFrame feeds the real captured window's frames through
+    // ScalingEngine/FrameGenEngine INSTEAD of the synthetic
+    // TestPatternSource (the two share the same engine instances and
+    // would otherwise fight over them -- see App::UpdateRealCapturePipeline).
+    std::unique_ptr<CaptureEngineWGC> captureEngine;
+    float captureScalePercent = 150.0f; // uniform upscale applied to the real captured window
     std::vector<DiagnosticResult> lastDiagnosticsResults;
 
     // Phase 3: thermal-aware signal + closed-loop quality auto-adjustment.
@@ -106,9 +125,17 @@ private:
     // broken device. Live frame generation is deliberately left disabled
     // after a successful recovery so the user re-enables it knowingly.
     bool AttemptDeviceLossRecovery();
+    void InitializeScalingEngine();
+    void UpdateRealCapturePipeline();
 
     static constexpr uint32_t kTestSourceWidth = 960;
     static constexpr uint32_t kTestSourceHeight = 540;
+    // Scaling demo target: a real upscale (not a 1:1 passthrough) so
+    // "Actual image upscaling" is genuinely exercised, independent of any
+    // profile's scalePercent (which governs capture-resolution reduction,
+    // a concept that needs the Capture Engine to mean anything real yet).
+    static constexpr uint32_t kScalingDstWidth = 1920;
+    static constexpr uint32_t kScalingDstHeight = 1080;
 
     HWND m_hwnd = nullptr;
     Microsoft::WRL::ComPtr<IDXGISwapChain1> m_swapChain;
@@ -125,6 +152,14 @@ private:
     double m_lastDetectionCheckSeconds = -1000.0;
     static constexpr double kDetectionIntervalSeconds = 1.5;
     bool m_perfHistorySessionWasActive = false;
+
+    // Phase 5: real-capture frame pairing state (see UpdateRealCapturePipeline).
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_capturePrevTex;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_capturePrevSrv;
+    uint32_t m_capturePrevWidth = 0, m_capturePrevHeight = 0;
+    uint32_t m_captureScalingSrcW = 0, m_captureScalingSrcH = 0;
+    uint32_t m_captureScalingDstW = 0, m_captureScalingDstH = 0;
+    bool m_wasCapturingReal = false;
 };
 
 } // namespace lsalt

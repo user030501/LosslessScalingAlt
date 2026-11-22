@@ -24,31 +24,34 @@ void GameSessionController::SaveState(FrameGenEngineD3D11* engine, int selectedP
     m_hasSavedState = true;
 }
 
-void GameSessionController::RestoreState(FrameGenEngineD3D11* engine, int& selectedProfileIndex) {
+void GameSessionController::RestoreState(FrameGenEngineD3D11* engine, int& selectedProfileIndex, bool liveDemoActive) {
     if (!m_hasSavedState) return;
     selectedProfileIndex = m_savedSelectedProfileIndex;
     if (engine) {
         engine->SetQualityMode(m_savedQuality);
         engine->SetMultiplier(m_savedMultiplier);
-        engine->SetEnabled(m_savedEnabled);
+        // See the class comment on Update(): don't fight the user's own
+        // Live Engine checkbox over the one flag both currently share.
+        if (!liveDemoActive) engine->SetEnabled(m_savedEnabled);
     }
     m_hasSavedState = false;
 }
 
-void GameSessionController::ApplyProfileToEngine(const GameProfile& profile, FrameGenEngineD3D11* engine) {
+void GameSessionController::ApplyProfileToEngine(const GameProfile& profile, FrameGenEngineD3D11* engine, bool liveDemoActive) {
     if (!engine) return;
     engine->SetQualityMode(profile.frameGenQuality);
     engine->SetMultiplier(profile.frameGenEnabled ? profile.frameGenMultiplier : FrameGenMultiplier::Off);
-    engine->SetEnabled(profile.frameGenEnabled);
+    if (!liveDemoActive) engine->SetEnabled(profile.frameGenEnabled);
 }
 
 bool GameSessionController::Update(const std::vector<DetectedProcess>& scan, ProfileManager& profiles,
-                                     FrameGenEngineD3D11* engine, int& selectedProfileIndex, std::string& statusMessage) {
+                                     FrameGenEngineD3D11* engine, int& selectedProfileIndex, std::string& statusMessage,
+                                     bool liveDemoActive) {
     m_lastScan = scan;
 
     if (!m_autoSwitchEnabled) {
         if (m_hasSavedState) {
-            RestoreState(engine, selectedProfileIndex);
+            RestoreState(engine, selectedProfileIndex, liveDemoActive);
             m_activeProcessId = 0;
             m_activeProfileName.reset();
             return true;
@@ -65,7 +68,7 @@ bool GameSessionController::Update(const std::vector<DetectedProcess>& scan, Pro
 
     if (m_activeProcessId != 0 && !activeStillRunning) {
         const std::string closedName = m_activeProfileName.value_or(std::string{});
-        RestoreState(engine, selectedProfileIndex);
+        RestoreState(engine, selectedProfileIndex, liveDemoActive);
         m_activeProcessId = 0;
         m_activeProfileName.reset();
         statusMessage = "'" + closedName + "' is no longer running; restored the previous settings.";
@@ -89,7 +92,7 @@ bool GameSessionController::Update(const std::vector<DetectedProcess>& scan, Pro
 
         if (best && bestProfile) {
             SaveState(engine, selectedProfileIndex);
-            ApplyProfileToEngine(*bestProfile, engine);
+            ApplyProfileToEngine(*bestProfile, engine, liveDemoActive);
 
             const int idx = profiles.IndexOf(bestProfile->displayName);
             if (idx >= 0) selectedProfileIndex = idx;
@@ -103,8 +106,11 @@ bool GameSessionController::Update(const std::vector<DetectedProcess>& scan, Pro
             m_activeProcessId = best->processId;
             m_activeProfileName = bestProfile->displayName;
             statusMessage = "Detected " + bestProfile->displayName + " (" + best->executableName +
-                              ") running -- applied its Frame Generation settings to this app. This does not yet "
-                              "capture or process that game's actual frames (Capture Engine is still unimplemented).";
+                              ") running -- applied its quality/multiplier settings to this app" +
+                              (liveDemoActive ? " (Live Engine's own enable state was left alone -- it's under your control)."
+                                                : ", including enable/disable.") +
+                              " This does not automatically start capturing it -- use the Game Library tab's "
+                              "\"Capture\" button on this card to actually capture its frames.";
             Logger::Instance().Info("GameSessionController", statusMessage);
             return true;
         }

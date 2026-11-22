@@ -229,11 +229,17 @@ ID3D11ShaderResourceView* FrameGenEngineD3D11::GenerateInterpolatedFrame(ID3D11S
 
     if (generated) {
         m_pacing->RecordGeneratedFrame();
-        m_pacing->RecordDisplayedFrame(); // frame A
-        m_pacing->RecordDisplayedFrame(); // generated frame
-        m_pacing->RecordDisplayedFrame(); // frame B
     }
 
+    // Phase 5 fix: "displayed" FPS used to be computed as exactly 3x
+    // generatedFps (one count each for frame A, the generated frame, and
+    // frame B) -- a derived multiplication, not an independent
+    // measurement, which is exactly what this phase's FPS-measurement
+    // review flagged. It is now driven solely by RecordPresentedFrame(),
+    // called from App::RenderFrame right after this app's own real
+    // IDXGISwapChain::Present() call succeeds -- a genuine OS-level
+    // presentation event. See RecordPresentedFrame's own comment for what
+    // this does and doesn't prove.
     return generated;
 }
 
@@ -255,6 +261,10 @@ uint32_t FrameGenEngineD3D11::OcclusionMaskWidth() const {
 
 uint32_t FrameGenEngineD3D11::OcclusionMaskHeight() const {
     return m_interpolator ? m_interpolator->OcclusionMaskHeight() : 0;
+}
+
+void FrameGenEngineD3D11::RecordPresentedFrame() {
+    if (m_pacing) m_pacing->RecordDisplayedFrame();
 }
 
 void FrameGenEngineD3D11::ResetRunningFpsStats() {

@@ -122,21 +122,39 @@ std::vector<DiagnosticResult> ProfileDiagnostics::RunAll(ProfileManager& profile
         fakeProc.isForegroundWindow = true;
         scanWithGame.push_back(fakeProc);
 
-        const bool appliedChange = controller.Update(scanWithGame, profiles, &engine, selectedIndex, status);
+        const bool appliedChange = controller.Update(scanWithGame, profiles, &engine, selectedIndex, status, false);
         const bool appliedCorrectly = engine.QualityMode() == FrameGenQualityMode::Quality &&
                                        engine.Multiplier() == FrameGenMultiplier::X2 && engine.IsEnabled() &&
                                        selectedIndex == profiles.IndexOf(kTestProfileName) && controller.HasActiveGame();
 
         const std::vector<DetectedProcess> scanWithoutGame; // the "game" has closed
-        const bool restoredChange = controller.Update(scanWithoutGame, profiles, &engine, selectedIndex, status);
+        const bool restoredChange = controller.Update(scanWithoutGame, profiles, &engine, selectedIndex, status, false);
         const bool restoredCorrectly = engine.QualityMode() == savedQuality && engine.Multiplier() == savedMultiplier &&
                                         engine.IsEnabled() == savedEnabled && !controller.HasActiveGame();
 
+        // Integration check: while the user's own Live Engine demo is
+        // active (liveDemoActive=true), automatic switching must still
+        // apply quality/multiplier but must NOT touch engine->SetEnabled
+        // -- that flag is the same one the Live Engine checkbox drives,
+        // and a detected game silently killing a demo the user turned on
+        // by hand would be a real, surprising interference (see
+        // GameSessionController::Update's class comment).
+        engine.SetEnabled(true); // simulate the user having turned Live Engine on
+        const bool enabledBeforeLiveTest = engine.IsEnabled();
+        const bool appliedWithLiveDemo = controller.Update(scanWithGame, profiles, &engine, selectedIndex, status, true);
+        const bool enabledUntouchedDuringApply = engine.IsEnabled() == enabledBeforeLiveTest;
+        const bool restoredWithLiveDemo = controller.Update(scanWithoutGame, profiles, &engine, selectedIndex, status, true);
+        const bool enabledUntouchedDuringRestore = engine.IsEnabled() == enabledBeforeLiveTest;
+        engine.SetEnabled(savedEnabled); // put it back exactly as found regardless of the simulated toggle above
+
         profiles.Remove(kTestProfileName);
 
-        r.passed = appliedChange && appliedCorrectly && restoredChange && restoredCorrectly;
+        r.passed = appliedChange && appliedCorrectly && restoredChange && restoredCorrectly && appliedWithLiveDemo &&
+                   enabledUntouchedDuringApply && restoredWithLiveDemo && enabledUntouchedDuringRestore;
         r.detail = "applied=" + std::to_string(appliedChange) + "/" + std::to_string(appliedCorrectly) +
                    " restored=" + std::to_string(restoredChange) + "/" + std::to_string(restoredCorrectly) +
+                   " liveDemoGuard(apply)=" + std::to_string(enabledUntouchedDuringApply) +
+                   " liveDemoGuard(restore)=" + std::to_string(enabledUntouchedDuringRestore) +
                    " -- note: this only changes this app's own Frame Generation Engine settings, never the "
                    "detected game's actual rendering (no Capture Engine yet).";
         results.push_back(r);

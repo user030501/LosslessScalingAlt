@@ -18,6 +18,10 @@ add_executable(LSAlt WIN32
     src/core/Logger.cpp
     src/core/ConfigManager.cpp
     src/gpu/GpuDeviceManager.cpp
+    src/capture/CaptureEngineWGC.cpp
+    src/capture/CaptureDiagnostics.cpp
+    src/scaling/ScalingEngine.cpp
+    src/scaling/ScalingDiagnostics.cpp
     src/monitor/PerfMonitor.cpp
     src/profiles/GameProfile.cpp
     src/profiles/ProfileManager.cpp
@@ -61,6 +65,7 @@ target_link_libraries(LSAlt PRIVATE
     comdlg32
     dwmapi
     wbemuuid
+    runtimeobject
 )
 
 target_compile_definitions(LSAlt PRIVATE
@@ -71,12 +76,28 @@ target_compile_definitions(LSAlt PRIVATE
 
 set_target_properties(LSAlt PROPERTIES OUTPUT_NAME "LSAlt")
 
-# Frame Generation Engine HLSL sources are compiled at runtime (see
-# ShaderCompiler) so they must sit next to the executable, not be baked in.
+# Frame Generation / Scaling Engine HLSL sources are compiled at runtime
+# (see ShaderCompiler) so they must sit next to the executable, not be
+# baked in.
 add_custom_command(TARGET LSAlt POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:LSAlt>/shaders/framegen"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/src/framegen/shaders"
         "$<TARGET_FILE_DIR:LSAlt>/shaders/framegen"
-    COMMENT "Copying Frame Generation Engine HLSL shaders next to the executable"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:LSAlt>/shaders/scaling"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/src/scaling/shaders"
+        "$<TARGET_FILE_DIR:LSAlt>/shaders/scaling"
+    COMMENT "Copying Frame Generation / Scaling Engine HLSL shaders next to the executable"
 )
+
+# ---------------------------------------------------------------------------
+# Packaging: `cmake --install build/windows-x64 --prefix <dir> --config Release`
+# produces a self-contained portable layout (exe + shaders + docs) at <dir>.
+# That same layout is what packaging/installer.iss (Inno Setup) wraps into a
+# Windows installer -- see docs/INSTALLATION.md.
+# ---------------------------------------------------------------------------
+install(TARGETS LSAlt RUNTIME DESTINATION .)
+install(DIRECTORY src/framegen/shaders/ DESTINATION shaders/framegen)
+install(DIRECTORY src/scaling/shaders/ DESTINATION shaders/scaling)
+install(FILES README.md LICENSE CHANGELOG.md DESTINATION .)

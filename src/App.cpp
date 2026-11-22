@@ -4,6 +4,8 @@
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
+#include <algorithm>
+#include <cmath>
 
 // imgui_impl_win32.h intentionally comments this declaration out (to avoid
 // dragging a <windows.h> dependency into the backend header) and asks the
@@ -126,9 +128,10 @@ bool App::Initialize(HINSTANCE hInstance) {
         return false;
     }
 
-    // Phase 4: Frame Generation Engine + its synthetic test source. Real
-    // game frames still require the Capture Engine (Phase 2), which is an
-    // unimplemented stub (capture/CaptureEngine.h) -- see docs/ARCHITECTURE.md.
+    // Frame Generation Engine + its synthetic test source, for controlled
+    // testing. Real game frames now come from CaptureEngineWGC (see below)
+    // when the user starts a real capture from the Game Library tab --
+    // see UpdateRealCapturePipeline for how the two sources are arbitrated.
     m_state.frameGenEngine = std::make_unique<FrameGenEngineD3D11>();
     m_state.frameGenEngine->SetVramQuery([this](uint64_t& used, uint64_t& budget) {
         return m_state.gpu.QueryVideoMemoryUsage(m_state.gpu.ActiveAdapterIndex(), used, budget);
@@ -144,6 +147,15 @@ bool App::Initialize(HINSTANCE hInstance) {
 
     m_state.testPatternSource = std::make_unique<TestPatternSource>();
     m_state.testPatternSource->Initialize(m_state.gpu.Device().Get(), kTestSourceWidth, kTestSourceHeight);
+
+    InitializeScalingEngine();
+
+    m_state.captureEngine = std::make_unique<CaptureEngineWGC>();
+    if (!m_state.captureEngine->Initialize(m_state.gpu.Device().Get())) {
+        Logger::Instance().Warn("App", "CaptureEngine failed to initialize: " + m_state.captureEngine->LastError());
+    } else if (!CaptureEngineWGC::IsSupportedOnThisSystem()) {
+        Logger::Instance().Warn("App", "Windows Graphics Capture is not supported on this OS build.");
+    }
 
     m_state.thermalMonitor = std::make_unique<ThermalMonitor>();
     m_state.dynamicPerfManager = std::make_unique<DynamicPerformanceManager>();
@@ -176,30 +188,65 @@ void App::RenderFrame() {
         m_lastDetectionCheckSeconds = nowSeconds;
         m_state.lastGameScan = m_state.gameDetector.Scan();
         m_state.gameSession.Update(m_state.lastGameScan, m_state.profiles, m_state.frameGenEngine.get(),
-                                     m_state.selectedProfileIndex, m_state.statusMessage);
+                                     m_state.selectedProfileIndex, m_state.statusMessage, m_state.frameGenLiveEnabled);
     }
 
-    if (m_state.frameGenLiveEnabled && m_state.frameGenEngine && m_state.testPatternSource) {
-        if (m_state.testPatternSource->Tick(m_state.gpu.Context().Get(), dt)) {
-            m_state.frameGenEngine->GenerateInterpolatedFrame(
-                m_state.testPatternSource->FrameASRV(), m_state.testPatternSource->FrameBSRV());
+    // Real capture (when active) takes over the Scaling/Frame Generation
+    // pipeline from the synthetic demo entirely -- they share the same
+    // engine instances, so driving both at once would just have them
+    // overwrite each other's output every tick. See
+    // UpdateRealCapturePipeline's own comment.
+    const bool capturingReal = m_state.captureEngine && m_state.captureEngine->IsCapturing();
+    if (capturingReal != m_wasCapturingReal && !capturingReal) {
+        // Capture just stopped: drop stale frame-pairing state rather than
+        // risk pairing a leftover frame from before a resolution/content
+        // change with a stale one.
+        m_capturePrevTex.Reset();
+        m_capturePrevSrv.Reset();
+    }
+    m_wasCapturingReal = capturingReal;
+
+    if (capturingReal) {
+        UpdateRealCapturePipeline();
+    } else {
+        const bool anySyntheticDemoActive = (m_state.frameGenLiveEnabled || m_state.scalingLiveEnabled) &&
+                                             m_state.testPatternSource;
+        bool newSourceFrameThisTick = false;
+        if (anySyntheticDemoActive) {
+            newSourceFrameThisTick = m_state.testPatternSource->Tick(m_state.gpu.Context().Get(), dt);
         }
 
-        if (m_state.dynamicPerfManager && m_state.frameGenEngine) {
-            const std::string reason = m_state.dynamicPerfManager->Update(
-                *m_state.frameGenEngine, m_state.frameGenEngine->GetStats(), m_state.lastThermalSample,
-                m_state.lastStats.gpuUtilPercent, m_state.lastStats.gpuUtilValid);
-            if (!reason.empty()) m_state.lastAutoPerfReason = reason;
+        if (m_state.scalingLiveEnabled && m_state.scalingEngine && m_state.testPatternSource) {
+            m_state.scalingEngine->Scale(m_state.gpu.Context().Get(), m_state.testPatternSource->FrameBSRV());
+        }
+
+        if (m_state.frameGenLiveEnabled && m_state.frameGenEngine && m_state.testPatternSource) {
+            if (newSourceFrameThisTick) {
+                m_state.frameGenEngine->GenerateInterpolatedFrame(
+                    m_state.testPatternSource->FrameASRV(), m_state.testPatternSource->FrameBSRV());
+            }
+
+            if (m_state.dynamicPerfManager && m_state.frameGenEngine) {
+                const std::string reason = m_state.dynamicPerfManager->Update(
+                    *m_state.frameGenEngine, m_state.frameGenEngine->GetStats(), m_state.lastThermalSample,
+                    m_state.lastStats.gpuUtilPercent, m_state.lastStats.gpuUtilValid);
+                if (!reason.empty()) m_state.lastAutoPerfReason = reason;
+            }
         }
     }
 
-    // Phase 4: performance session history. A session spans however long
+    // Phase 4/5: performance session history. A session spans however long
     // Live Engine stays on (that's what actually produces real
-    // FrameGenStats today), labeled with whatever game is currently
-    // auto-detected if any, else clearly marked as the synthetic source.
+    // FrameGenStats today), labeled with the real captured window's title
+    // when real capture is active, else whatever game is auto-detected,
+    // else clearly marked as the synthetic source.
     if (m_state.frameGenLiveEnabled && !m_perfHistorySessionWasActive) {
-        const std::string label = m_state.gameSession.HasActiveGame() ? m_state.gameSession.ActiveGameProfileName()
-                                                                         : std::string("(Synthetic Test Source)");
+        std::string label = "(Synthetic Test Source)";
+        if (capturingReal) {
+            label = "[Captured] " + m_state.captureEngine->TargetWindowTitle();
+        } else if (m_state.gameSession.HasActiveGame()) {
+            label = m_state.gameSession.ActiveGameProfileName();
+        }
         m_state.perfHistory.BeginSession(label);
         m_perfHistorySessionWasActive = true;
     } else if (!m_state.frameGenLiveEnabled && m_perfHistorySessionWasActive) {
@@ -226,7 +273,80 @@ void App::RenderFrame() {
     const HRESULT presentHr = m_swapChain->Present(1, 0);
     if (presentHr == DXGI_ERROR_DEVICE_REMOVED || presentHr == DXGI_ERROR_DEVICE_RESET) {
         AttemptDeviceLossRecovery();
+    } else if (SUCCEEDED(presentHr) && m_state.frameGenLiveEnabled && m_state.frameGenEngine) {
+        // Phase 5 FPS-measurement fix: this is the one real, independent
+        // presentation event this app has today (its own swapchain
+        // Present) -- see FrameGenTypes.h's comment on displayedFps for
+        // exactly what this is a stand-in for and what it isn't.
+        m_state.frameGenEngine->RecordPresentedFrame();
     }
+}
+
+void App::InitializeScalingEngine() {
+    m_state.scalingEngine = std::make_unique<ScalingEngineD3D11>();
+
+    wchar_t exePath[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    std::wstring dir(exePath);
+    const size_t slash = dir.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) dir = dir.substr(0, slash);
+
+    if (m_state.scalingEngine->Initialize(m_state.gpu.Device().Get(), dir + L"\\shaders\\scaling")) {
+        m_state.scalingEngine->Resize(kTestSourceWidth, kTestSourceHeight, kScalingDstWidth, kScalingDstHeight);
+    } else {
+        Logger::Instance().Warn("App", "ScalingEngine failed to initialize (shader compile failure?).");
+    }
+}
+
+void App::UpdateRealCapturePipeline() {
+    ID3D11ShaderResourceView* captured = m_state.captureEngine->LatestFrameSRV();
+    if (!captured || !m_state.scalingEngine) return;
+
+    uint32_t srcW = 0, srcH = 0;
+    m_state.captureEngine->GetFrameSize(srcW, srcH);
+    if (srcW == 0 || srcH == 0) return;
+
+    const uint32_t dstW = std::max(1u, static_cast<uint32_t>(std::lround(srcW * m_state.captureScalePercent / 100.0f)));
+    const uint32_t dstH = std::max(1u, static_cast<uint32_t>(std::lround(srcH * m_state.captureScalePercent / 100.0f)));
+
+    if (srcW != m_captureScalingSrcW || srcH != m_captureScalingSrcH ||
+        dstW != m_captureScalingDstW || dstH != m_captureScalingDstH) {
+        m_state.scalingEngine->Resize(srcW, srcH, dstW, dstH);
+        m_captureScalingSrcW = srcW;
+        m_captureScalingSrcH = srcH;
+        m_captureScalingDstW = dstW;
+        m_captureScalingDstH = dstH;
+        // A real size change invalidates any pending "previous frame" --
+        // pairing it with a differently-sized new frame would be wrong.
+        m_capturePrevTex.Reset();
+        m_capturePrevSrv.Reset();
+    }
+
+    ID3D11ShaderResourceView* scaledSrv = m_state.scalingEngine->Scale(m_state.gpu.Context().Get(), captured);
+    if (!scaledSrv) return;
+
+    if (m_state.frameGenLiveEnabled && m_state.frameGenEngine && m_capturePrevSrv) {
+        m_state.frameGenEngine->Resize(dstW, dstH);
+        m_state.frameGenEngine->GenerateInterpolatedFrame(m_capturePrevSrv.Get(), scaledSrv);
+    }
+
+    // Keep this tick's scaled output as "previous" for the next tick's pairing.
+    if (!m_capturePrevTex || m_capturePrevWidth != dstW || m_capturePrevHeight != dstH) {
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = dstW;
+        desc.Height = dstH;
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        if (FAILED(m_state.gpu.Device()->CreateTexture2D(&desc, nullptr, m_capturePrevTex.ReleaseAndGetAddressOf()))) return;
+        if (FAILED(m_state.gpu.Device()->CreateShaderResourceView(m_capturePrevTex.Get(), nullptr, m_capturePrevSrv.ReleaseAndGetAddressOf()))) return;
+        m_capturePrevWidth = dstW;
+        m_capturePrevHeight = dstH;
+    }
+    m_state.gpu.Context()->CopyResource(m_capturePrevTex.Get(), m_state.scalingEngine->OutputTexture());
 }
 
 bool App::AttemptDeviceLossRecovery() {
@@ -242,6 +362,11 @@ bool App::AttemptDeviceLossRecovery() {
     m_swapChain.Reset();
     m_state.frameGenEngine.reset();
     m_state.testPatternSource.reset();
+    m_state.scalingEngine.reset();
+    if (m_state.captureEngine) m_state.captureEngine->StopCapture();
+    m_state.captureEngine.reset();
+    m_capturePrevTex.Reset();
+    m_capturePrevSrv.Reset();
 
     const int preferredAdapter = m_state.config.Get().preferredAdapterIndex;
     if (!m_state.gpu.EnumerateAdapters() || !m_state.gpu.CreateDeviceOnAdapter(preferredAdapter)) {
@@ -281,9 +406,18 @@ bool App::AttemptDeviceLossRecovery() {
     m_state.testPatternSource = std::make_unique<TestPatternSource>();
     m_state.testPatternSource->Initialize(m_state.gpu.Device().Get(), kTestSourceWidth, kTestSourceHeight);
 
-    // Require the user to deliberately re-enable live generation after a
-    // recovery rather than silently resuming it on a just-recreated device.
+    InitializeScalingEngine();
+
+    m_state.captureEngine = std::make_unique<CaptureEngineWGC>();
+    if (!m_state.captureEngine->Initialize(m_state.gpu.Device().Get())) {
+        Logger::Instance().Warn("App", "CaptureEngine failed to reinitialize after recovery: " + m_state.captureEngine->LastError());
+    }
+
+    // Require the user to deliberately re-enable live generation/scaling/
+    // capture after a recovery rather than silently resuming it on a
+    // just-recreated device.
     m_state.frameGenLiveEnabled = false;
+    m_state.scalingLiveEnabled = false;
     if (m_state.frameGenEngine) m_state.frameGenEngine->SetEnabled(false);
 
     Logger::Instance().Info("App", "Device-loss recovery succeeded: GPU device, swap chain, UI renderer and "
@@ -326,6 +460,16 @@ int App::RunSelfTest() {
     const auto profileResults = ProfileDiagnostics::RunAll(m_state.profiles, *m_state.frameGenEngine);
     results.insert(results.end(), profileResults.begin(), profileResults.end());
 
+    const auto scalingResults = ScalingDiagnostics::RunAll(m_state.gpu.Device().Get(), m_state.gpu.Context().Get(),
+                                                             *m_state.frameGenEngine, *m_state.testPatternSource);
+    results.insert(results.end(), scalingResults.begin(), scalingResults.end());
+
+    if (m_state.captureEngine) {
+        const auto captureResults = CaptureDiagnostics::RunAll(*m_state.captureEngine, m_hwnd,
+                                                                 m_state.gpu.Device().Get(), m_state.gpu.Context().Get());
+        results.insert(results.end(), captureResults.begin(), captureResults.end());
+    }
+
     bool allPassed = true;
     for (const auto& r : results) {
         Logger::Instance().Log(r.passed ? LogLevel::Info : LogLevel::Error, "SelfTest",
@@ -341,6 +485,8 @@ void App::Shutdown() {
         m_state.perfHistory.EndSession();
         m_perfHistorySessionWasActive = false;
     }
+
+    if (m_state.captureEngine) m_state.captureEngine->StopCapture();
 
     g_uiManager.Shutdown();
 

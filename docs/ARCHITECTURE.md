@@ -6,55 +6,70 @@ proprietary source, binaries, icons or branding of any existing product.
 
 ## Module map
 
-| Module                         | Path                    | Phase | Status |
-|---------------------------------|--------------------------|-------|--------|
-| Desktop UI                     | `src/ui/`                | 1     | Implemented (ImGui, dark theme, 8 panels) |
-| Configuration Manager          | `src/core/ConfigManager.*`| 1    | Implemented (JSON, `%LOCALAPPDATA%\LSAlt`) |
-| Game Profile Manager           | `src/profiles/`          | 1     | Implemented (JSON persistence + 4 sample profiles) |
-| GPU Processing Engine (device/enum)| `src/gpu/`           | 1     | Implemented (real DXGI adapter enumeration + D3D11 device) |
-| Performance Monitoring Engine  | `src/monitor/`           | 1     | Implemented (real CPU/RAM/VRAM via Win32 + DXGI; game FPS deferred to Phase 2) |
-| Game Capture Engine            | `src/capture/`           | 2     | Interface only (`ICaptureEngine`); no implementation |
-| Image Scaling Engine           | `src/scaling/`           | 3     | Interface only (`IScalingEngine`); no implementation |
-| Frame Generation Engine        | `src/framegen/`          | 4     | Interface only (`IFrameGenEngine`); no implementation |
+| Module                         | Path                    | Status |
+|---------------------------------|--------------------------|--------|
+| Desktop UI                     | `src/ui/`                | Implemented (ImGui, dark theme, 9 panels) |
+| Configuration Manager          | `src/core/ConfigManager.*`| Implemented (JSON, `%LOCALAPPDATA%\LSAlt`, backup-before-overwrite) |
+| Game Profile Manager + Detection | `src/profiles/`         | Implemented (JSON persistence, 4 built-in profiles, real process detection, automatic profile switching, performance session history) |
+| GPU Processing Engine (device/enum) | `src/gpu/`           | Implemented (real DXGI adapter enumeration scored by capability, D3D11 device, device-loss recovery) |
+| Performance Monitoring Engine  | `src/monitor/`           | Implemented (real CPU/RAM/VRAM/GPU-util/CPU-temp via Win32/DXGI/PDH/WMI/registry) |
+| Game Capture Engine            | `src/capture/`           | Implemented (`CaptureEngineWGC`, real Windows Graphics Capture). Compiles, links, and runs correctly (detects non-support rather than faking it); end-to-end verification on the dev machine is blocked by that machine's OS services being disabled -- see `HARDWARE_COMPATIBILITY.md` |
+| Image Scaling Engine           | `src/scaling/`           | Implemented (`ScalingEngineD3D11`: Nearest/Bilinear/Bicubic/Lanczos/Integer Scale, real aspect-ratio letterboxing). FSR1/NIS fall back to Bilinear (not implemented -- porting vendor reference shaders is out of scope) |
+| Frame Generation Engine        | `src/framegen/`          | Implemented (`FrameGenEngineD3D11`: block-matching motion estimation, forward/backward warping, occlusion-aware blending, VRAM-aware quality guard, thermal/dynamic-performance auto-adjust). 3x/4x remain architecture placeholders only |
 
 Each engine module is behind an interface (`I*Engine`) so a concrete
 implementation can be swapped in without touching the UI or the modules
-around it. The UI already has controls for settings those engines will read
-(scaling algorithm, scale %, frame-gen multiplier, etc.) — they persist to
-disk now, and take effect once the corresponding engine exists.
+around it. Scaling and Frame Generation are proven against a synthetic,
+deterministic test-pattern source (for repeatable automated testing) AND
+against real captured window content when Capture is active -- see
+`App::UpdateRealCapturePipeline` for exactly how the two are arbitrated
+(real capture takes priority over the synthetic demo whenever it's active).
 
-## Phase 1 data flow
+## Startup data flow
 
 ```
 WinMain -> App::Initialize
-             |-- GpuDeviceManager::EnumerateAdapters()   (real DXGI adapters: MX150 + UHD 620)
+             |-- GpuDeviceManager::EnumerateAdapters()   (real DXGI adapters, capability-scored)
              |-- GpuDeviceManager::CreateDeviceOnAdapter (D3D11 device for the UI's own swapchain)
-             |-- PerfMonitor(&gpu)                        (CPU/RAM/VRAM sampling)
+             |-- PerfMonitor(&gpu)                        (CPU/RAM/VRAM/GPU-util sampling)
+             |-- FrameGenEngineD3D11::Initialize + InitializeScalingEngine + CaptureEngineWGC::Initialize
              |-- CreateAppWindow / CreateSwapChain
              '-- UIManager::Initialize (ImGui + Win32/D3D11 backends, dark theme)
 
 App::Run (message loop)
   -> RenderFrame per frame:
-       PerfMonitor::Sample() -> AppState.lastStats
+       PerfMonitor::Sample() / ThermalMonitor::Sample() -> AppState.lastStats
+       GameDetector::Scan() + GameSessionController::Update() (every ~1.5s)
+       if real capture active: UpdateRealCapturePipeline()
+       else: synthetic TestPatternSource demo path (if either Live toggle is on)
        UIManager::Draw(AppState) -> left nav + active panel
-       Present
+       Present -> FrameGenEngineD3D11::RecordPresentedFrame() (real displayedFps measurement)
 ```
 
 `AppState` (in `App.h`) is the one object every UI panel function receives;
-it bundles `ConfigManager`, `ProfileManager`, `GpuDeviceManager`,
-`PerfMonitor` and UI-only scratch state (selected profile, Start/Stop flag).
+it bundles every manager/engine (`ConfigManager`, `ProfileManager`,
+`GpuDeviceManager`, `PerfMonitor`, `ScalingEngineD3D11`, `FrameGenEngineD3D11`,
+`CaptureEngineWGC`, `GameSessionController`, `PerformanceHistory`) and
+UI-only scratch state.
 
-## Planned data flow once Phase 2-4 land
+## Real pipeline data flow
 
 ```
-ICaptureEngine   : target window -> ID3D11Texture2D (per frame)
-IScalingEngine   : captured texture -> scaled texture (HLSL pass matching
-                    the profile's ScalingAlgorithm)
-IFrameGenEngine  : pair of scaled frames -> N interpolated frames
-                    (motion-vector-based warp+blend, not duplication)
-Presenter        : paces and presents the resulting frame sequence into a
-                    borderless window placed over/replacing the original
+CaptureEngineWGC  : user-selected real window -> ID3D11Texture2D (Windows
+                     Graphics Capture, async FrameArrived callback)
+ScalingEngineD3D11: captured texture -> scaled texture (real compute-shader
+                     Nearest/Bilinear/Bicubic/Lanczos/Integer Scale pass,
+                     matching the selected ScalingAlgorithm + aspect ratio)
+FrameGenEngineD3D11: pair of scaled frames -> 1 interpolated frame
+                     (motion-vector-based warp+blend, not duplication)
 ```
+
+App::UpdateRealCapturePipeline pairs consecutive scaled real frames (A, B)
+each tick and feeds them to FrameGenEngineD3D11 exactly like the synthetic
+demo does -- the same engine code path either way. There is not yet a
+dedicated presenter window that displays the final result over/in place of
+the captured game; the live preview in the Game Library panel is the
+current way to see it.
 
 ## Why these technology choices
 

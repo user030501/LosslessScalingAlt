@@ -20,6 +20,7 @@ struct DetectedProcess {
     std::string executableName; // e.g. "VALORANT-Win64-Shipping.exe"
     std::string executablePath; // full path, when queryable (may be empty)
     bool isForegroundWindow = false; // true if this is the current foreground app
+    HWND windowHandle = nullptr; // the top-level window found for this process (see Scan's rule)
 };
 
 // Real, read-only Win32 process enumeration (CreateToolhelp32Snapshot) +
