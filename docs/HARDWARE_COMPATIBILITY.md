@@ -18,21 +18,25 @@ benchmark run on different hardware.
 ## What was actually verified, and how
 
 All results below come from the automated self-test suite
-(`LSAlt.exe --selftest`), which is 27/27 passing as of this writing, run
-against the NVIDIA GeForce MX150 (auto-selected by the capability-scored
-adapter selection over the Intel UHD 620).
+(`LSAlt.exe --selftest`), which is 30/30 passing as of this writing (both
+Debug and Release), run against the NVIDIA GeForce MX150 (auto-selected by
+the capability-scored adapter selection over the Intel UHD 620).
 
 | Area | Verified | Notes |
 |---|---|---|
 | GPU enumeration/selection | Yes | Both adapters enumerated with real capability flags; MX150 auto-selected (more VRAM, both compute-capable) |
-| Frame Generation (2x) | Yes | 14 scenarios, real GPU motion estimation + interpolation + readback, against a synthetic deterministic source (no real game capture pipeline existed when this was built) |
+| Frame Generation (2x) | Yes | 14 scenarios, real GPU motion estimation + interpolation + readback, against a synthetic deterministic source |
 | Image Scaling | Yes | 6 scenarios with exact pixel-level ground truth (not approximate) for Nearest/Integer-Scale exactness and letterboxing math, plus real pipeline composition with Frame Generation |
 | GPU optimization (VRAM guard, auto-select, device-loss recovery) | Yes | Including a real, interesting finding: this hybrid-graphics laptop's DXGI-reported VRAM budget for the MX150 starts very low (~1MB) immediately after the adapter wakes from idle, then climbs to its real ~1.9GB within moments — the VRAM guard reacted correctly to that real (if initially misleading) number |
-| Game detection | Yes | Real process enumeration finds this app's own running process deterministically |
-| Profile switching | Yes | Synthetic process-scan injection (no second real game needed) exercising the real switching/restoration code paths |
+| Game detection (self) | Yes | Real process enumeration finds this app's own running process deterministically |
+| **Game detection (real third-party game)** | **Yes** | Roblox (`RobloxPlayerBeta.exe`), genuinely installed on this machine, launched for real; LSAlt's Game Library tab showed "Active: Roblox" within the normal detection cadence, with a real log entry confirming profile application. See Phase 6 section below. |
+| Profile switching | Yes | Synthetic process-scan injection (deterministic/reproducible) exercising the real switching/restoration code paths, plus the real Roblox detection above |
 | Performance history / CSV export | Yes | Real file I/O, round-tripped |
 | FPS independence | Yes | Confirmed interactively: Source=30, Generated=30, Displayed=60 (not a clean multiple — tied to this app's own real present cadence hitting every other vblank at a detected 120Hz refresh rate) |
 | CPU temperature | Yes | Real reading via WMI `MSAcpi_ThermalZoneTemperature` works on this machine |
+| **Output Presenter window** | **Yes** | Opened for real, resized for real (real `WM_SIZE` through the real swapchain resize path), fullscreen-toggled, closed — automated test plus a direct visual screenshot confirming the real pipeline output (checkered test pattern + moving marker) rendering in the dedicated window |
+| **Capture feedback-loop prevention** | **Yes** | Real, deterministic: a window on the exclusion list is refused with a distinct, correct error message, verified independent of whether WGC itself is available |
+| **Invalid capture target handling** | **Yes** | Null and bogus window handles are refused gracefully, no crash, `IsCapturing()` never incorrectly reports true |
 | GPU temperature | **Not available** | Requires vendor-specific NVIDIA NVAPI / AMD ADL, which this app intentionally does not depend on. Always reported as N/A, never estimated. |
 | **Real window capture (Windows Graphics Capture)** | **Not verified end-to-end** | See below |
 
@@ -75,6 +79,42 @@ not been confirmed.
 Graphics Capture should simply work. If capture reports "not supported,"
 check that the "Connected Devices Platform Service" is not disabled in
 `services.msc`.
+
+### Phase 6 update: real-game detection verified; real capture still blocked
+
+A second, independent investigation pass (Phase 6) re-confirmed the same
+root cause and went one level deeper: `CDPUserSvc` (the per-user companion
+service) was also disabled, and even the Windows Event Log service itself
+is disabled on this machine. With the user's explicit, scoped approval,
+`CDPSvc` and `ncbservice` were re-enabled (`sc config ... start=demand`);
+`CDPUserSvc`'s template was also re-enabled, but its already-instantiated
+per-session copy needs a logoff/logon cycle to pick that up, which was not
+performed (that's a materially bigger, more disruptive ask than a service
+config change, and out of scope to do unprompted). WGC capture therefore
+still reports "not supported" on this specific machine.
+
+**What *was* verified for real this phase, without needing WGC:**
+- **Real game detection against an actual installed, running commercial
+  game.** Roblox is genuinely installed on this machine
+  (`RobloxPlayerBeta.exe`). It was launched for real, and LSAlt's Game
+  Library tab correctly showed "Automatic Profile Switching — Active:
+  Roblox" within the normal ~1.5s detection cadence, with a real log entry
+  confirming it applied Roblox's profile settings. This is genuine process
+  detection against a real third-party application, not a self-capture
+  test or synthetic substitute.
+- Grand Theft Auto V is **not** actually installed on this machine (only
+  the Rockstar Games Social Club launcher is present) — GTA V compatibility
+  was not and could not be tested here, and is not claimed.
+- **The real Output Presenter window, visually confirmed**, displaying the
+  real pipeline's processed output (synthetic source → Scaling Engine →
+  Frame Generation Engine → Presenter's D3D11 swapchain blit) in a
+  dedicated second top-level window, screenshotted directly — not just
+  passing an automated test in isolation.
+- **A real, measured bug found and fixed this phase**: `IsSupportedOnThisSystem()`
+  was documented as "checked once, cached" but the caching was never
+  actually implemented; it was being called every rendered UI frame while
+  the Game Library panel was visible, producing continuous real WinRT
+  activation overhead and log spam. Fixed with a real `static` cache.
 
 ## Not implemented (by design, not oversight)
 

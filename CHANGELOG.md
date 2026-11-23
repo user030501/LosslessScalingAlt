@@ -3,6 +3,40 @@
 All notable changes to this project are documented here. Versions are
 development milestones, not public releases.
 
+## [0.6.0] - Real-game integration: Output Presenter, pipeline wiring
+
+### Added
+- `OutputPresenter`: a real, dedicated, borderless-but-resizable output
+  window with its own D3D11 swapchain, presenting the pipeline's final
+  processed frame via a one-draw-call fullscreen-triangle blit (no CPU
+  readback). Supports resizing, fullscreen toggle (F11/Esc), aspect-ratio
+  preservation, and clean close (Esc/Alt+F4/window X).
+- Real capture → scale → frame-generate → **present** pipeline wiring:
+  `App::UpdateRealCapturePipeline` now also drives the Output Presenter
+  when it's open, with real `displayedFps` measurement tied to the
+  Presenter's own `Present()` calls once it's open (falling back to the
+  main UI window's otherwise).
+- Feedback-loop prevention: `CaptureEngineWGC::SetExcludedWindows` refuses
+  to capture a window on the exclusion list (the Presenter's, kept in
+  sync automatically); checked before, and independent of, WGC support,
+  so it's deterministically testable.
+- Minimized/stalled-capture detection: `CaptureEngineWGC::SecondsSinceLastFrame()`,
+  surfaced in the UI when a capture stops receiving new frames.
+- 4 new automated diagnostic scenarios: real self-capture (already
+  present, now alongside), feedback-loop-prevention, invalid-capture-target
+  handling, and full Output Presenter lifecycle (open/present/resize/
+  fullscreen/close) — self-test is now 30 scenarios.
+- Real-world verification: launched an actually-installed copy of Roblox
+  and confirmed LSAlt's automatic game detection/profile switching
+  against it for real (not a self-test or synthetic substitute).
+
+### Fixed
+- `CaptureEngineWGC::IsSupportedOnThisSystem()` was documented as "checked
+  once, cached" but was never actually cached — it was being called from
+  UI draw code every rendered frame while the Game Library panel was
+  visible, causing continuous real WinRT activation-factory overhead and
+  log spam. Now a real `static`-initialized cache.
+
 ## [0.5.0] - Capture, Scaling, FPS correction, stability, release prep
 
 ### Added

@@ -104,6 +104,7 @@ void App::ResizeSwapChain(UINT width, UINT height) {
 }
 
 bool App::Initialize(HINSTANCE hInstance) {
+    m_state.hInstance = hInstance;
     Logger::Instance().SetLevel(m_state.config.Get().logLevel);
     Logger::Instance().Info("App", "Starting LSAlt Phase 1 shell.");
 
@@ -156,6 +157,9 @@ bool App::Initialize(HINSTANCE hInstance) {
     } else if (!CaptureEngineWGC::IsSupportedOnThisSystem()) {
         Logger::Instance().Warn("App", "Windows Graphics Capture is not supported on this OS build.");
     }
+
+    InitializePresenter();
+    RefreshCaptureExclusionList();
 
     m_state.thermalMonitor = std::make_unique<ThermalMonitor>();
     m_state.dynamicPerfManager = std::make_unique<DynamicPerformanceManager>();
@@ -216,14 +220,23 @@ void App::RenderFrame() {
             newSourceFrameThisTick = m_state.testPatternSource->Tick(m_state.gpu.Context().Get(), dt);
         }
 
+        ID3D11ShaderResourceView* finalSrv = nullptr;
+        uint32_t finalW = 0, finalH = 0;
+
         if (m_state.scalingLiveEnabled && m_state.scalingEngine && m_state.testPatternSource) {
-            m_state.scalingEngine->Scale(m_state.gpu.Context().Get(), m_state.testPatternSource->FrameBSRV());
+            finalSrv = m_state.scalingEngine->Scale(m_state.gpu.Context().Get(), m_state.testPatternSource->FrameBSRV());
+            finalW = kScalingDstWidth;
+            finalH = kScalingDstHeight;
         }
 
         if (m_state.frameGenLiveEnabled && m_state.frameGenEngine && m_state.testPatternSource) {
             if (newSourceFrameThisTick) {
-                m_state.frameGenEngine->GenerateInterpolatedFrame(
-                    m_state.testPatternSource->FrameASRV(), m_state.testPatternSource->FrameBSRV());
+                if (ID3D11ShaderResourceView* generated = m_state.frameGenEngine->GenerateInterpolatedFrame(
+                        m_state.testPatternSource->FrameASRV(), m_state.testPatternSource->FrameBSRV())) {
+                    finalSrv = generated;
+                    finalW = kTestSourceWidth;
+                    finalH = kTestSourceHeight;
+                }
             }
 
             if (m_state.dynamicPerfManager && m_state.frameGenEngine) {
@@ -233,6 +246,8 @@ void App::RenderFrame() {
                 if (!reason.empty()) m_state.lastAutoPerfReason = reason;
             }
         }
+
+        if (finalSrv) PresentToOutputWindowIfOpen(finalSrv, finalW, finalH);
     }
 
     // Phase 4/5: performance session history. A session spans however long
@@ -273,17 +288,34 @@ void App::RenderFrame() {
     const HRESULT presentHr = m_swapChain->Present(1, 0);
     if (presentHr == DXGI_ERROR_DEVICE_REMOVED || presentHr == DXGI_ERROR_DEVICE_RESET) {
         AttemptDeviceLossRecovery();
-    } else if (SUCCEEDED(presentHr) && m_state.frameGenLiveEnabled && m_state.frameGenEngine) {
-        // Phase 5 FPS-measurement fix: this is the one real, independent
-        // presentation event this app has today (its own swapchain
-        // Present) -- see FrameGenTypes.h's comment on displayedFps for
-        // exactly what this is a stand-in for and what it isn't.
+    } else if (SUCCEEDED(presentHr) && m_state.frameGenLiveEnabled && m_state.frameGenEngine &&
+               !(m_state.presenter && m_state.presenter->IsOpen())) {
+        // Phase 5 FPS-measurement fix: this is a real, independent
+        // presentation event (its own swapchain Present) -- see
+        // FrameGenTypes.h's comment on displayedFps for exactly what this
+        // is a stand-in for and what it isn't. Once a real Presenter
+        // window is open (Phase 6), ITS Present is the more meaningful
+        // "frame actually shown" event, so this one steps aside for it --
+        // see PresentToOutputWindowIfOpen.
         m_state.frameGenEngine->RecordPresentedFrame();
     }
+
+    // Phase 6: the presenter's open/closed state can change from UI code
+    // (Game Library tab) between ticks -- keep the capture exclusion list
+    // in sync either direction, so its window is excluded as soon as it
+    // exists and stops being excluded (no stale HWND) once it's gone.
+    const bool presenterOpenNow = m_state.presenter && m_state.presenter->IsOpen();
+    if (presenterOpenNow != m_presenterWasOpen) {
+        RefreshCaptureExclusionList();
+    }
+    m_presenterWasOpen = presenterOpenNow;
 }
 
 void App::InitializeScalingEngine() {
     m_state.scalingEngine = std::make_unique<ScalingEngineD3D11>();
+    m_state.scalingEngine->SetVramQuery([this](uint64_t& used, uint64_t& budget) {
+        return m_state.gpu.QueryVideoMemoryUsage(m_state.gpu.ActiveAdapterIndex(), used, budget);
+    });
 
     wchar_t exePath[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
@@ -295,6 +327,41 @@ void App::InitializeScalingEngine() {
         m_state.scalingEngine->Resize(kTestSourceWidth, kTestSourceHeight, kScalingDstWidth, kScalingDstHeight);
     } else {
         Logger::Instance().Warn("App", "ScalingEngine failed to initialize (shader compile failure?).");
+    }
+}
+
+void App::InitializePresenter() {
+    m_state.presenter = std::make_unique<OutputPresenter>();
+
+    wchar_t exePath[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    std::wstring dir(exePath);
+    const size_t slash = dir.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) dir = dir.substr(0, slash);
+
+    if (!m_state.presenter->Initialize(m_state.gpu.Device().Get(), m_state.gpu.Context().Get(), dir + L"\\shaders\\presenter")) {
+        Logger::Instance().Warn("App", "OutputPresenter failed to initialize (shader compile failure?).");
+    }
+}
+
+void App::RefreshCaptureExclusionList() {
+    if (!m_state.captureEngine) return;
+    // Deliberately NOT excluding this app's own main window: the self-
+    // capture self-test (CaptureDiagnostics) legitimately captures it, and
+    // the main window's small Game Library preview thumbnail is a much
+    // lower-severity loop risk than the Presenter (whose entire purpose is
+    // showing the full-resolution continuous processed output -- that's
+    // the one that actually must never be a valid capture target).
+    std::vector<HWND> excluded;
+    if (m_state.presenter && m_state.presenter->IsOpen()) excluded.push_back(m_state.presenter->WindowHandle());
+    m_state.captureEngine->SetExcludedWindows(std::move(excluded));
+}
+
+void App::PresentToOutputWindowIfOpen(ID3D11ShaderResourceView* srv, uint32_t width, uint32_t height) {
+    if (!m_state.presenter || !m_state.presenter->IsOpen()) return;
+    const bool presented = m_state.presenter->PresentFrame(srv, width, height);
+    if (presented && m_state.frameGenLiveEnabled && m_state.frameGenEngine) {
+        m_state.frameGenEngine->RecordPresentedFrame();
     }
 }
 
@@ -325,10 +392,15 @@ void App::UpdateRealCapturePipeline() {
     ID3D11ShaderResourceView* scaledSrv = m_state.scalingEngine->Scale(m_state.gpu.Context().Get(), captured);
     if (!scaledSrv) return;
 
+    ID3D11ShaderResourceView* finalSrv = scaledSrv; // what actually goes to the output window
     if (m_state.frameGenLiveEnabled && m_state.frameGenEngine && m_capturePrevSrv) {
         m_state.frameGenEngine->Resize(dstW, dstH);
-        m_state.frameGenEngine->GenerateInterpolatedFrame(m_capturePrevSrv.Get(), scaledSrv);
+        if (ID3D11ShaderResourceView* generated =
+                m_state.frameGenEngine->GenerateInterpolatedFrame(m_capturePrevSrv.Get(), scaledSrv)) {
+            finalSrv = generated;
+        }
     }
+    PresentToOutputWindowIfOpen(finalSrv, dstW, dstH);
 
     // Keep this tick's scaled output as "previous" for the next tick's pairing.
     if (!m_capturePrevTex || m_capturePrevWidth != dstW || m_capturePrevHeight != dstH) {
@@ -365,6 +437,9 @@ bool App::AttemptDeviceLossRecovery() {
     m_state.scalingEngine.reset();
     if (m_state.captureEngine) m_state.captureEngine->StopCapture();
     m_state.captureEngine.reset();
+    if (m_state.presenter) m_state.presenter->Close();
+    m_state.presenter.reset();
+    m_presenterWasOpen = false;
     m_capturePrevTex.Reset();
     m_capturePrevSrv.Reset();
 
@@ -412,6 +487,9 @@ bool App::AttemptDeviceLossRecovery() {
     if (!m_state.captureEngine->Initialize(m_state.gpu.Device().Get())) {
         Logger::Instance().Warn("App", "CaptureEngine failed to reinitialize after recovery: " + m_state.captureEngine->LastError());
     }
+
+    InitializePresenter();
+    RefreshCaptureExclusionList();
 
     // Require the user to deliberately re-enable live generation/scaling/
     // capture after a recovery rather than silently resuming it on a
@@ -464,9 +542,10 @@ int App::RunSelfTest() {
                                                              *m_state.frameGenEngine, *m_state.testPatternSource);
     results.insert(results.end(), scalingResults.begin(), scalingResults.end());
 
-    if (m_state.captureEngine) {
+    if (m_state.captureEngine && m_state.presenter) {
         const auto captureResults = CaptureDiagnostics::RunAll(*m_state.captureEngine, m_hwnd,
-                                                                 m_state.gpu.Device().Get(), m_state.gpu.Context().Get());
+                                                                 m_state.gpu.Device().Get(), m_state.gpu.Context().Get(),
+                                                                 *m_state.presenter, m_state.hInstance);
         results.insert(results.end(), captureResults.begin(), captureResults.end());
     }
 
@@ -487,6 +566,7 @@ void App::Shutdown() {
     }
 
     if (m_state.captureEngine) m_state.captureEngine->StopCapture();
+    if (m_state.presenter) m_state.presenter->Close();
 
     g_uiManager.Shutdown();
 

@@ -16,6 +16,7 @@ proprietary source, binaries, icons or branding of any existing product.
 | Game Capture Engine            | `src/capture/`           | Implemented (`CaptureEngineWGC`, real Windows Graphics Capture). Compiles, links, and runs correctly (detects non-support rather than faking it); end-to-end verification on the dev machine is blocked by that machine's OS services being disabled -- see `HARDWARE_COMPATIBILITY.md` |
 | Image Scaling Engine           | `src/scaling/`           | Implemented (`ScalingEngineD3D11`: Nearest/Bilinear/Bicubic/Lanczos/Integer Scale, real aspect-ratio letterboxing). FSR1/NIS fall back to Bilinear (not implemented -- porting vendor reference shaders is out of scope) |
 | Frame Generation Engine        | `src/framegen/`          | Implemented (`FrameGenEngineD3D11`: block-matching motion estimation, forward/backward warping, occlusion-aware blending, VRAM-aware quality guard, thermal/dynamic-performance auto-adjust). 3x/4x remain architecture placeholders only |
+| Output Presenter                | `src/presenter/`         | Implemented (`OutputPresenter`: dedicated borderless-resizable window, own D3D11 swapchain, one-draw-call fullscreen-triangle blit, fullscreen toggle, feedback-loop-safe) |
 
 Each engine module is behind an interface (`I*Engine`) so a concrete
 implementation can be swapped in without touching the UI or the modules

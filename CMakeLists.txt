@@ -18,10 +18,12 @@ add_executable(LSAlt WIN32
     src/core/Logger.cpp
     src/core/ConfigManager.cpp
     src/gpu/GpuDeviceManager.cpp
+    src/gpu/TexturePool.cpp
     src/capture/CaptureEngineWGC.cpp
     src/capture/CaptureDiagnostics.cpp
     src/scaling/ScalingEngine.cpp
     src/scaling/ScalingDiagnostics.cpp
+    src/presenter/OutputPresenter.cpp
     src/monitor/PerfMonitor.cpp
     src/profiles/GameProfile.cpp
     src/profiles/ProfileManager.cpp
@@ -88,7 +90,11 @@ add_custom_command(TARGET LSAlt POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/src/scaling/shaders"
         "$<TARGET_FILE_DIR:LSAlt>/shaders/scaling"
-    COMMENT "Copying Frame Generation / Scaling Engine HLSL shaders next to the executable"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:LSAlt>/shaders/presenter"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/src/presenter/shaders"
+        "$<TARGET_FILE_DIR:LSAlt>/shaders/presenter"
+    COMMENT "Copying Frame Generation / Scaling / Presenter HLSL shaders next to the executable"
 )
 
 # ---------------------------------------------------------------------------
@@ -100,4 +106,5 @@ add_custom_command(TARGET LSAlt POST_BUILD
 install(TARGETS LSAlt RUNTIME DESTINATION .)
 install(DIRECTORY src/framegen/shaders/ DESTINATION shaders/framegen)
 install(DIRECTORY src/scaling/shaders/ DESTINATION shaders/scaling)
+install(DIRECTORY src/presenter/shaders/ DESTINATION shaders/presenter)
 install(FILES README.md LICENSE CHANGELOG.md DESTINATION .)

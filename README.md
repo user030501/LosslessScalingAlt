@@ -34,7 +34,13 @@ what was verified on real hardware versus what's a known limitation.
   recovery.
 - **Real game detection and profile management**: process-based detection
   (no injection), automatic profile switching, a game library UI, JSON
-  persistence with corruption recovery and backups.
+  persistence with corruption recovery and backups. Verified against a
+  real, installed, running commercial game (Roblox), not just a
+  self-test.
+- **Real dedicated output window**: a second top-level window, its own
+  D3D11 swapchain, presenting the pipeline's processed output (resizable,
+  fullscreen-togglable, aspect-ratio-preserving), automatically excluded
+  from capture targets so it can't feed its own output back into itself.
 - **Real performance monitoring**: independently measured source/generated/
   displayed FPS (displayed FPS is tied to actual present events, not a
   derived multiple of the others), frame-time graphing, session history
@@ -63,16 +69,17 @@ dev hardware.)
 
 - 3x/4x frame generation are not implemented.
 - FSR1/NVIDIA Image Scaling are not implemented (fall back to Bilinear).
-- Real-game, real-capture end-to-end testing on the dev machine was blocked
-  by that specific machine's OS configuration (several Windows services
-  disabled by a prior debloat) — see
+- Real-game, real-*capture* end-to-end testing (actually grabbing a real
+  game's frames) was blocked by the dev machine's OS configuration
+  (several Windows services disabled by a prior debloat) — see
   [`docs/HARDWARE_COMPATIBILITY.md`](docs/HARDWARE_COMPATIBILITY.md) for
-  the exact details. The capture implementation itself builds, links, and
+  the exact details. Real-game *detection* (no capture needed) was
+  verified against an actually-installed, actually-running copy of
+  Roblox. Grand Theft Auto V is not actually installed on the dev machine
+  (only the Rockstar Games Social Club launcher is present) and was not
+  tested. The capture implementation itself builds, links, and
   correctly detects support/non-support; it has not been verified
   end-to-end against an actual running game on real hardware.
-- There is no dedicated "replace the game's window with the processed
-  output" presenter yet; processed output is currently shown in the app's
-  own preview panels.
 
 ## License / originality note
 

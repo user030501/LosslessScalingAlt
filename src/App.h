@@ -14,6 +14,7 @@
 #include "scaling/ScalingEngine.h"
 #include "scaling/ScalingDiagnostics.h"
 #include "capture/CaptureEngineWGC.h"
+#include "presenter/OutputPresenter.h"
 #include "capture/CaptureDiagnostics.h"
 #include "framegen/FrameGenEngine.h"
 #include "framegen/TestPatternSource.h"
@@ -68,6 +69,12 @@ struct AppState {
     // would otherwise fight over them -- see App::UpdateRealCapturePipeline).
     std::unique_ptr<CaptureEngineWGC> captureEngine;
     float captureScalePercent = 150.0f; // uniform upscale applied to the real captured window
+
+    // Phase 6: a real, dedicated output window showing the pipeline's
+    // final processed frame. See OutputPresenter's class comment for the
+    // feedback-loop safety rationale (why it's excluded from capture targets).
+    std::unique_ptr<OutputPresenter> presenter;
+    HINSTANCE hInstance = nullptr; // needed by UI code that calls presenter->Open()
     std::vector<DiagnosticResult> lastDiagnosticsResults;
 
     // Phase 3: thermal-aware signal + closed-loop quality auto-adjustment.
@@ -126,7 +133,16 @@ private:
     // after a successful recovery so the user re-enables it knowingly.
     bool AttemptDeviceLossRecovery();
     void InitializeScalingEngine();
+    void InitializePresenter();
     void UpdateRealCapturePipeline();
+    void RefreshCaptureExclusionList();
+    // Shared tail end of both the real-capture and synthetic-demo paths:
+    // shows `srv` in the output window if it's open, and ties real
+    // "displayed" FPS measurement to whichever Present() call actually
+    // represents a frame the user saw (the Presenter's, if open; the
+    // main UI window's otherwise -- see FrameGenTypes.h's comment on
+    // displayedFps).
+    void PresentToOutputWindowIfOpen(ID3D11ShaderResourceView* srv, uint32_t width, uint32_t height);
 
     static constexpr uint32_t kTestSourceWidth = 960;
     static constexpr uint32_t kTestSourceHeight = 540;
@@ -160,6 +176,7 @@ private:
     uint32_t m_captureScalingSrcW = 0, m_captureScalingSrcH = 0;
     uint32_t m_captureScalingDstW = 0, m_captureScalingDstH = 0;
     bool m_wasCapturingReal = false;
+    bool m_presenterWasOpen = false;
 };
 
 } // namespace lsalt

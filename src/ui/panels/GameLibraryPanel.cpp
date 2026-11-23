@@ -1,5 +1,6 @@
 #include "Panels.h"
 #include "../../App.h"
+#include "../../core/Logger.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cstdio>
@@ -47,6 +48,14 @@ void DrawGameLibraryPanel(AppState& state) {
         uint32_t cw = 0, ch = 0;
         state.captureEngine->GetFrameSize(cw, ch);
         ImGui::Text("Capturing: %s (%ux%u)", state.captureEngine->TargetWindowTitle().c_str(), cw, ch);
+
+        const double stalledFor = state.captureEngine->SecondsSinceLastFrame();
+        if (stalledFor > 3.0) {
+            ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.2f, 1.0f),
+                                "No new frame in %.0fs -- the captured window may be minimized, occluded by an "
+                                "exclusive-fullscreen app, or its process may have stopped rendering.", stalledFor);
+        }
+
         if (ImGui::Button("Stop Capture")) state.captureEngine->StopCapture();
         ImGui::SliderFloat("Capture Upscale %", &state.captureScalePercent, 50.0f, 300.0f, "%.0f%%");
         if (state.captureEngine->LatestFrameSRV()) {
@@ -73,6 +82,34 @@ void DrawGameLibraryPanel(AppState& state) {
         if (state.captureEngine && !state.captureEngine->LastError().empty()) {
             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f), "Last capture error: %s", state.captureEngine->LastError().c_str());
         }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "Output Window");
+    ImGui::TextWrapped(
+        "A dedicated window showing the pipeline's processed frame (scaled, and motion-interpolated when Live "
+        "Engine is on) -- a real second D3D11 swapchain, not a copy of the preview thumbnails above. It is "
+        "automatically excluded from capture targets (capturing it would feed its own output back into itself).");
+    if (state.presenter && state.presenter->IsOpen()) {
+        if (ImGui::Button("Close Output Window")) state.presenter->Close();
+        ImGui::SameLine();
+        if (ImGui::Button(state.presenter->IsFullscreen() ? "Exit Fullscreen" : "Fullscreen (F11)")) {
+            state.presenter->ToggleFullscreen();
+        }
+        bool preserveAspect = state.presenter->PreserveAspectRatio();
+        if (ImGui::Checkbox("Preserve Aspect Ratio##presenter", &preserveAspect)) {
+            state.presenter->SetPreserveAspectRatio(preserveAspect);
+        }
+        ImGui::TextDisabled("Esc: exit fullscreen, then close. Alt+F4: close from any state.");
+    } else if (state.presenter) {
+        if (ImGui::Button("Open Output Window")) {
+            if (!state.presenter->Open(state.hInstance)) {
+                Logger::Instance().Error("UI", "Failed to open the output window.");
+            }
+        }
+    } else {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Output window failed to construct.");
     }
 
     ImGui::Spacing();

@@ -46,9 +46,30 @@ struct GameProfile {
     int64_t lastPlayedUnixSeconds = 0;
     // Optional target processing resolution override ("Game resolution").
     // 0x0 means "native/unset" -- unused until the Capture/Scaling Engines
-    // exist to actually act on it.
+    // exist to actually act on it. Phase 7: this is the OUTPUT resolution;
+    // see inputResWidth/Height below for the matching input side.
     uint32_t targetResWidth = 0;
     uint32_t targetResHeight = 0;
+
+    // Phase 7 additions ---------------------------------------------------
+    // Input (captured/source) resolution override. 0x0 = automatic (use
+    // whatever the real captured window's actual size is).
+    uint32_t inputResWidth = 0;
+    uint32_t inputResHeight = 0;
+
+    ScalingQualityPreset scalingQuality = ScalingQualityPreset::Balanced;
+    SharpenLevel sharpenLevel = SharpenLevel::Off;
+    AspectMode aspectMode = AspectMode::Fit;
+
+    // Bumped whenever a profile-file schema change needs old files to be
+    // migrated (see ProfileManager::MigrateIfNeeded). 0 means "written
+    // before this field existed" -- nlohmann's `.value(key, default)`
+    // already makes every individual field backward-compatible on its
+    // own; this version number is for migration steps that are more than
+    // "just default a missing field" (recorded explicitly, logged, and
+    // the file re-saved, rather than silently re-defaulting every load).
+    int profileSchemaVersion = 0;
+    static constexpr int kCurrentSchemaVersion = 1;
 };
 
 void to_json(nlohmann::json& j, const GameProfile& p);

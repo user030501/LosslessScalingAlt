@@ -62,7 +62,7 @@ Either option can self-test from a terminal:
 LSAlt.exe --selftest
 ```
 
-This runs the full automated diagnostic suite (27 scenarios covering
+This runs the full automated diagnostic suite (30 scenarios covering
 Frame Generation, GPU behavior, profiles, and Scaling) against your actual
 hardware and exits with code `0` if everything passes. Results are logged
 to `%LOCALAPPDATA%\LSAlt\logs\lsalt.log`.

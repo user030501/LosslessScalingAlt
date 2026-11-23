@@ -15,7 +15,8 @@ struct ScalingCB {
     uint32_t viewportOrigin[2];
     uint32_t viewportSize[2];
     uint32_t integerFactor;
-    uint32_t padding[3]; // pad to a 16-byte multiple (D3D11 constant buffer requirement)
+    float sharpenAmount;
+    uint32_t padding[2]; // pad to a 16-byte multiple (D3D11 constant buffer requirement)
 };
 
 uint32_t DivRoundUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
@@ -41,7 +42,7 @@ void UpdateDynamicCB(ID3D11DeviceContext* context, ID3D11Buffer* cb, const T& da
 }
 } // namespace
 
-ScalingEngineD3D11::ScalingEngineD3D11() = default;
+ScalingEngineD3D11::ScalingEngineD3D11() : m_texturePool(4) {}
 ScalingEngineD3D11::~ScalingEngineD3D11() = default;
 
 bool ScalingEngineD3D11::Initialize(ID3D11Device* device, const std::wstring& shaderDir) {
@@ -73,6 +74,26 @@ bool ScalingEngineD3D11::Initialize(ID3D11Device* device, const std::wstring& sh
     return m_cb != nullptr;
 }
 
+AspectMode ScalingEngineD3D11::EffectiveAspectMode() const {
+    // Backward compatibility: selecting the IntegerScale ALGORITHM has
+    // always implied integer-factor placement, since before AspectMode
+    // existed that was the only way to ask for it. Keep that working
+    // exactly as before for any caller that only ever touches
+    // SetAlgorithm/SetPreserveAspectRatio.
+    if (m_algorithm == ScalingAlgorithm::IntegerScale) return AspectMode::IntegerScale;
+    return m_aspectMode;
+}
+
+float ScalingEngineD3D11::SharpenAmountFor(SharpenLevel level) const {
+    switch (level) {
+        case SharpenLevel::Off:    return 0.0f;
+        case SharpenLevel::Low:    return 0.15f;
+        case SharpenLevel::Medium: return 0.35f;
+        case SharpenLevel::High:   return 0.60f;
+        default:                   return 0.0f;
+    }
+}
+
 void ScalingEngineD3D11::RecomputeViewport() {
     if (m_srcWidth == 0 || m_srcHeight == 0 || m_dstWidth == 0 || m_dstHeight == 0) {
         m_viewportX = m_viewportY = 0;
@@ -81,51 +102,114 @@ void ScalingEngineD3D11::RecomputeViewport() {
         return;
     }
 
-    if (m_algorithm == ScalingAlgorithm::IntegerScale) {
-        // Integer scaling is aspect-preserving by definition: the largest
-        // whole-number factor that still fits in both dimensions.
-        const uint32_t factorX = m_dstWidth / m_srcWidth;
-        const uint32_t factorY = m_dstHeight / m_srcHeight;
-        m_integerFactor = std::max(1u, std::min(factorX, factorY));
-        m_viewportW = m_srcWidth * m_integerFactor;
-        m_viewportH = m_srcHeight * m_integerFactor;
-    } else if (m_preserveAspect) {
-        const double scaleX = static_cast<double>(m_dstWidth) / m_srcWidth;
-        const double scaleY = static_cast<double>(m_dstHeight) / m_srcHeight;
-        const double scale = std::min(scaleX, scaleY);
-        m_viewportW = static_cast<uint32_t>(std::lround(m_srcWidth * scale));
-        m_viewportH = static_cast<uint32_t>(std::lround(m_srcHeight * scale));
-        m_integerFactor = 1;
-    } else {
-        m_viewportW = m_dstWidth;
-        m_viewportH = m_dstHeight;
-        m_integerFactor = 1;
+    switch (EffectiveAspectMode()) {
+        case AspectMode::IntegerScale: {
+            // Aspect-preserving by definition: the largest whole-number
+            // factor that still fits in both dimensions.
+            const uint32_t factorX = m_dstWidth / m_srcWidth;
+            const uint32_t factorY = m_dstHeight / m_srcHeight;
+            m_integerFactor = std::max(1u, std::min(factorX, factorY));
+            m_viewportW = m_srcWidth * m_integerFactor;
+            m_viewportH = m_srcHeight * m_integerFactor;
+            break;
+        }
+        case AspectMode::Fit: {
+            const double scaleX = static_cast<double>(m_dstWidth) / m_srcWidth;
+            const double scaleY = static_cast<double>(m_dstHeight) / m_srcHeight;
+            const double scale = std::min(scaleX, scaleY);
+            m_viewportW = static_cast<uint32_t>(std::lround(m_srcWidth * scale));
+            m_viewportH = static_cast<uint32_t>(std::lround(m_srcHeight * scale));
+            m_integerFactor = 1;
+            break;
+        }
+        case AspectMode::Stretch:
+        default:
+            m_viewportW = m_dstWidth;
+            m_viewportH = m_dstHeight;
+            m_integerFactor = 1;
+            break;
     }
 
     m_viewportX = (m_dstWidth > m_viewportW) ? (m_dstWidth - m_viewportW) / 2 : 0;
     m_viewportY = (m_dstHeight > m_viewportH) ? (m_dstHeight - m_viewportH) / 2 : 0;
 }
 
+void ScalingEngineD3D11::ClampRequestedSize(uint32_t& dstWidth, uint32_t& dstHeight) {
+    m_lastClampReason.clear();
+
+    const uint32_t beforeW = dstWidth, beforeH = dstHeight;
+    dstWidth = std::min(dstWidth, kMaxTextureDimension);
+    dstHeight = std::min(dstHeight, kMaxTextureDimension);
+    if (dstWidth != beforeW || dstHeight != beforeH) {
+        m_lastClampReason = "Requested " + std::to_string(beforeW) + "x" + std::to_string(beforeH) +
+                              " exceeds the real D3D11 hardware limit (" + std::to_string(kMaxTextureDimension) +
+                              " px/dimension); clamped to " + std::to_string(dstWidth) + "x" + std::to_string(dstHeight) + ".";
+        Logger::Instance().Warn("ScalingEngine", m_lastClampReason);
+    }
+
+    if (!m_vramQuery) return;
+    uint64_t used = 0, budget = 0;
+    if (!m_vramQuery(used, budget) || budget == 0) return;
+
+    const uint64_t headroom = (budget > used) ? (budget - used) : 0;
+    const uint64_t safeHeadroom = static_cast<uint64_t>(headroom * 0.85); // leave margin, same policy as FrameGenEngine's guard
+
+    // Conservative resource limit for 2GB-class VRAM (MX150): the output
+    // texture plus one source-sized buffer, 4 bytes/px each, must fit.
+    for (int attempt = 0; attempt < 12; ++attempt) {
+        const uint64_t estimated = (static_cast<uint64_t>(dstWidth) * dstHeight +
+                                     static_cast<uint64_t>(m_srcWidth) * m_srcHeight) * 4;
+        if (estimated <= safeHeadroom || (dstWidth <= 64 && dstHeight <= 64)) break;
+
+        // Scale both dimensions down together so the aspect ratio of the
+        // request itself is preserved even while shrinking it to fit --
+        // shrinking only one axis would distort what the caller asked for.
+        const double shrink = std::sqrt(static_cast<double>(safeHeadroom) / static_cast<double>(std::max<uint64_t>(estimated, 1)));
+        const uint32_t newW = std::max(64u, static_cast<uint32_t>(dstWidth * shrink));
+        const uint32_t newH = std::max(64u, static_cast<uint32_t>(dstHeight * shrink));
+        if (newW >= dstWidth && newH >= dstHeight) break; // no progress -- avoid an infinite loop
+        dstWidth = newW;
+        dstHeight = newH;
+    }
+
+    if (dstWidth != beforeW || dstHeight != beforeH) {
+        if (!m_lastClampReason.empty()) m_lastClampReason += " ";
+        m_lastClampReason += "VRAM headroom (" + std::to_string(safeHeadroom / (1024 * 1024)) +
+                               " MB safe) required shrinking the request to fit this GPU's budget.";
+        Logger::Instance().Warn("ScalingEngine", "Clamped destination size for VRAM headroom: now " +
+                                                       std::to_string(dstWidth) + "x" + std::to_string(dstHeight) + ".");
+    }
+}
+
 bool ScalingEngineD3D11::Resize(uint32_t srcWidth, uint32_t srcHeight, uint32_t dstWidth, uint32_t dstHeight) {
     m_valid = false;
     m_srcWidth = srcWidth;
     m_srcHeight = srcHeight;
+
+    ClampRequestedSize(dstWidth, dstHeight);
     m_dstWidth = dstWidth;
     m_dstHeight = dstHeight;
     RecomputeViewport();
 
-    D3D11_TEXTURE2D_DESC desc{};
-    desc.Width = std::max(dstWidth, 1u);
-    desc.Height = std::max(dstHeight, 1u);
-    desc.MipLevels = 1;
-    desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    desc.SampleDesc.Count = 1;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-    if (FAILED(m_device->CreateTexture2D(&desc, nullptr, m_outputTexture.ReleaseAndGetAddressOf()))) return false;
-    if (FAILED(m_device->CreateShaderResourceView(m_outputTexture.Get(), nullptr, m_outputSrv.ReleaseAndGetAddressOf()))) return false;
-    if (FAILED(m_device->CreateUnorderedAccessView(m_outputTexture.Get(), nullptr, m_outputUav.ReleaseAndGetAddressOf()))) return false;
+    // Hand the current output texture back to the pool instead of
+    // destroying it outright -- if we resize back to this exact shape
+    // later (e.g. toggling between two quality presets/resolutions), it's
+    // reused instead of reallocated.
+    if (m_outputTexture) {
+        D3D11_TEXTURE2D_DESC oldDesc{};
+        m_outputTexture->GetDesc(&oldDesc);
+        m_texturePool.Release(m_outputTexture, m_outputSrv, m_outputUav, oldDesc.Width, oldDesc.Height, oldDesc.Format,
+                               oldDesc.BindFlags);
+        m_outputTexture.Reset();
+        m_outputSrv.Reset();
+        m_outputUav.Reset();
+    }
+
+    const UINT bindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+    if (!m_texturePool.Acquire(m_device.Get(), std::max(dstWidth, 1u), std::max(dstHeight, 1u),
+                                 DXGI_FORMAT_R8G8B8A8_UNORM, bindFlags, m_outputTexture, m_outputSrv, m_outputUav)) {
+        return false;
+    }
 
     m_valid = true;
     return true;
@@ -138,9 +222,22 @@ void ScalingEngineD3D11::SetAlgorithm(ScalingAlgorithm algorithm) {
 }
 
 void ScalingEngineD3D11::SetPreserveAspectRatio(bool preserve) {
-    if (preserve == m_preserveAspect) return;
     m_preserveAspect = preserve;
+    m_aspectMode = preserve ? AspectMode::Fit : AspectMode::Stretch;
     RecomputeViewport();
+}
+
+void ScalingEngineD3D11::SetAspectMode(AspectMode mode) {
+    if (mode == m_aspectMode) return;
+    m_aspectMode = mode;
+    m_preserveAspect = (mode != AspectMode::Stretch);
+    RecomputeViewport();
+}
+
+void ScalingEngineD3D11::SetSharpenLevel(SharpenLevel level) { m_sharpenLevel = level; }
+
+uint64_t ScalingEngineD3D11::EstimatedOutputTextureBytes() const {
+    return static_cast<uint64_t>(m_dstWidth) * m_dstHeight * 4;
 }
 
 ID3D11ShaderResourceView* ScalingEngineD3D11::Scale(ID3D11DeviceContext* context, ID3D11ShaderResourceView* srcSRV) {
@@ -156,6 +253,8 @@ ID3D11ShaderResourceView* ScalingEngineD3D11::Scale(ID3D11DeviceContext* context
     cb.viewportSize[0] = m_viewportW;
     cb.viewportSize[1] = m_viewportH;
     cb.integerFactor = m_integerFactor;
+    // Never sharpened -- see Scaling.hlsl's file header comment.
+    cb.sharpenAmount = (m_algorithm == ScalingAlgorithm::IntegerScale) ? 0.0f : SharpenAmountFor(m_sharpenLevel);
     UpdateDynamicCB(context, m_cb.Get(), cb);
 
     ID3D11ComputeShader* shader = m_csBilinear.Get();

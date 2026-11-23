@@ -19,6 +19,17 @@ namespace winrtD3D = winrt::Windows::Graphics::DirectX;
 namespace winrtD3D11 = winrt::Windows::Graphics::DirectX::Direct3D11;
 
 namespace {
+double NowSeconds() {
+    static const double freq = [] {
+        LARGE_INTEGER f{};
+        QueryPerformanceFrequency(&f);
+        return static_cast<double>(f.QuadPart);
+    }();
+    LARGE_INTEGER c{};
+    QueryPerformanceCounter(&c);
+    return static_cast<double>(c.QuadPart) / freq;
+}
+
 std::string NarrowFromWide(const std::wstring& w) {
     if (w.empty()) return {};
     const int needed = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
@@ -83,6 +94,8 @@ struct CaptureEngineWGC::Impl {
     std::string lastError;
     std::string targetWindowTitle;
     HWND targetWindow = nullptr;
+    std::vector<HWND> excludedWindows;
+    double lastFrameArrivalSeconds = 0.0;
 
     void EnsureOutputTexture(uint32_t width, uint32_t height) {
         if (width == frameWidth && height == frameHeight && latestTexture) return;
@@ -151,6 +164,7 @@ struct CaptureEngineWGC::Impl {
         if (latestTexture) {
             contextOwned->CopyResource(latestTexture.Get(), capturedTex.Get());
         }
+        lastFrameArrivalSeconds = NowSeconds();
     }
 };
 
@@ -168,16 +182,26 @@ CaptureEngineWGC::~CaptureEngineWGC() {
 }
 
 bool CaptureEngineWGC::IsSupportedOnThisSystem() {
-    try {
-        return winrtWGC::GraphicsCaptureSession::IsSupported();
-    } catch (const winrt::hresult_error& e) {
-        Logger::Instance().Warn("CaptureEngineWGC", "IsSupported() threw hr=" + std::to_string(static_cast<int32_t>(e.code())) +
-                                                         " msg=" + NarrowFromWide(std::wstring(e.message())));
-        return false;
-    } catch (...) {
-        Logger::Instance().Warn("CaptureEngineWGC", "IsSupported() threw a non-WinRT exception.");
-        return false;
-    }
+    // Actually cached, as the header promises: this is called from UI
+    // draw code every single rendered frame while the Game Library panel
+    // is visible, and the uncached version was a real, measured bug --
+    // repeated real WinRT activation-factory calls every frame, which
+    // showed up as a continuous warning-log spam and real per-frame
+    // overhead. Support can't change within a single process's lifetime,
+    // so computing it once is both correct and necessary.
+    static const bool kSupported = [] {
+        try {
+            return winrtWGC::GraphicsCaptureSession::IsSupported();
+        } catch (const winrt::hresult_error& e) {
+            Logger::Instance().Warn("CaptureEngineWGC", "IsSupported() threw hr=" + std::to_string(static_cast<int32_t>(e.code())) +
+                                                             " msg=" + NarrowFromWide(std::wstring(e.message())));
+            return false;
+        } catch (...) {
+            Logger::Instance().Warn("CaptureEngineWGC", "IsSupported() threw a non-WinRT exception.");
+            return false;
+        }
+    }();
+    return kSupported;
 }
 
 bool CaptureEngineWGC::Initialize(ID3D11Device* device) {
@@ -195,13 +219,26 @@ bool CaptureEngineWGC::Initialize(ID3D11Device* device) {
 bool CaptureEngineWGC::StartCaptureWindow(HWND targetWindow) {
     StopCapture();
 
+    // Checked before (and independent of) WGC support: there's no reason
+    // to probe WinRT activation for a target we're going to refuse
+    // regardless, and it keeps this safety check exercisable by a test
+    // even in environments where WGC itself isn't available (see
+    // CaptureDiagnostics).
+    if (!targetWindow || !IsWindow(targetWindow)) {
+        m_impl->lastError = "Invalid target window.";
+        return false;
+    }
+    if (std::find(m_impl->excludedWindows.begin(), m_impl->excludedWindows.end(), targetWindow) !=
+        m_impl->excludedWindows.end()) {
+        m_impl->lastError = "Refusing to capture this app's own window(s) -- that would create a feedback loop "
+                             "(captured -> processed -> presented -> captured again, compounding every tick).";
+        Logger::Instance().Warn("CaptureEngineWGC", m_impl->lastError);
+        return false;
+    }
+
     if (!IsSupportedOnThisSystem()) {
         m_impl->lastError = "Windows Graphics Capture is not supported on this OS build/configuration.";
         Logger::Instance().Error("CaptureEngineWGC", m_impl->lastError);
-        return false;
-    }
-    if (!targetWindow || !IsWindow(targetWindow)) {
-        m_impl->lastError = "Invalid target window.";
         return false;
     }
 
@@ -255,6 +292,7 @@ bool CaptureEngineWGC::StartCaptureWindow(HWND targetWindow) {
 
     m_impl->capturing = true;
     m_impl->lastError.clear();
+    m_impl->lastFrameArrivalSeconds = 0.0;
     Logger::Instance().Info("CaptureEngineWGC", "Started capturing window: " + m_impl->targetWindowTitle);
     return true;
 }
@@ -292,5 +330,15 @@ void CaptureEngineWGC::GetFrameSize(uint32_t& width, uint32_t& height) const {
 
 std::string CaptureEngineWGC::LastError() const { return m_impl->lastError; }
 std::string CaptureEngineWGC::TargetWindowTitle() const { return m_impl->targetWindowTitle; }
+
+void CaptureEngineWGC::SetExcludedWindows(std::vector<HWND> excluded) {
+    m_impl->excludedWindows = std::move(excluded);
+}
+
+double CaptureEngineWGC::SecondsSinceLastFrame() const {
+    std::lock_guard<std::mutex> lock(m_impl->frameMutex);
+    if (!m_impl->capturing || m_impl->lastFrameArrivalSeconds <= 0.0) return 0.0;
+    return NowSeconds() - m_impl->lastFrameArrivalSeconds;
+}
 
 } // namespace lsalt

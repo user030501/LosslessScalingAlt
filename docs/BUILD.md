@@ -69,7 +69,7 @@ it creates:
 - "Start Scaling" on Home is a UI-only status flag (it says so) — the real
   controls for capture/scaling/frame-generation live on their own tabs.
 - Run `LSAlt.exe --selftest` to run the full automated diagnostic suite
-  (27 scenarios) headlessly; it exits 0 if everything passes.
+  (30 scenarios) headlessly; it exits 0 if everything passes.
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for what's implemented versus
 known limitations, and [`INSTALLATION.md`](INSTALLATION.md) for portable/

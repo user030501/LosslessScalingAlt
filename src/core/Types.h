@@ -33,6 +33,54 @@ inline const char* ToString(ScalingAlgorithm a) {
     }
 }
 
+// Phase 7: how ScalingEngine places the (possibly non-matching-aspect)
+// source content within the destination texture. Orthogonal to
+// ScalingAlgorithm (which controls pixel sampling, not placement) --
+// except IntegerScale the ALGORITHM implies IntegerScale the ASPECT MODE
+// automatically, for backward compatibility with profiles/code written
+// before this enum existed (see ScalingEngineD3D11::EffectiveAspectMode).
+enum class AspectMode : int {
+    Stretch = 0,  // fill the destination exactly; source aspect ratio is not preserved
+    Fit,          // preserve aspect ratio, letterbox/pillarbox as needed (bars are black)
+    IntegerScale, // preserve aspect ratio at the largest whole-number pixel factor that fits
+};
+
+inline const char* ToString(AspectMode m) {
+    switch (m) {
+        case AspectMode::Stretch:      return "Stretch";
+        case AspectMode::Fit:          return "Fit (preserve aspect ratio)";
+        case AspectMode::IntegerScale: return "Integer Scale";
+        default:                       return "Unknown";
+    }
+}
+
+enum class SharpenLevel : int { Off = 0, Low, Medium, High };
+
+inline const char* ToString(SharpenLevel s) {
+    switch (s) {
+        case SharpenLevel::Off:    return "Off";
+        case SharpenLevel::Low:    return "Low";
+        case SharpenLevel::Medium: return "Medium";
+        case SharpenLevel::High:   return "High";
+        default:                   return "Unknown";
+    }
+}
+
+// Convenience preset bundling an algorithm + sharpen choice; orthogonal to
+// picking them individually (the UI can offer "just pick a preset" OR
+// "pick each setting yourself" -- a preset is just a one-click default for
+// both, not a separate code path).
+enum class ScalingQualityPreset : int { Performance = 0, Balanced, Quality };
+
+inline const char* ToString(ScalingQualityPreset p) {
+    switch (p) {
+        case ScalingQualityPreset::Performance: return "Performance";
+        case ScalingQualityPreset::Balanced:    return "Balanced";
+        case ScalingQualityPreset::Quality:     return "Quality";
+        default:                                return "Unknown";
+    }
+}
+
 enum class WindowMode : int { Fullscreen = 0, BorderlessWindow, Windowed };
 
 inline const char* ToString(WindowMode m) {

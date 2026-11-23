@@ -26,6 +26,12 @@ void to_json(nlohmann::json& j, const GameProfile& p) {
         {"lastPlayedUnixSeconds", p.lastPlayedUnixSeconds},
         {"targetResWidth", p.targetResWidth},
         {"targetResHeight", p.targetResHeight},
+        {"inputResWidth", p.inputResWidth},
+        {"inputResHeight", p.inputResHeight},
+        {"scalingQuality", static_cast<int>(p.scalingQuality)},
+        {"sharpenLevel", static_cast<int>(p.sharpenLevel)},
+        {"aspectMode", static_cast<int>(p.aspectMode)},
+        {"profileSchemaVersion", p.profileSchemaVersion},
     };
 }
 
@@ -52,6 +58,18 @@ void from_json(const nlohmann::json& j, GameProfile& p) {
     p.lastPlayedUnixSeconds = j.value("lastPlayedUnixSeconds", static_cast<int64_t>(0));
     p.targetResWidth = j.value("targetResWidth", 0u);
     p.targetResHeight = j.value("targetResHeight", 0u);
+    // Phase 7 fields: missing in any profile written before this version
+    // existed, in which case `.value()`'s defaults alone already make
+    // loading that file safe. ProfileManager::MigrateIfNeeded additionally
+    // detects profileSchemaVersion < kCurrentSchemaVersion and re-saves
+    // the file with these defaults made explicit + the version bumped,
+    // logged, rather than silently re-defaulting on every single load.
+    p.inputResWidth = j.value("inputResWidth", 0u);
+    p.inputResHeight = j.value("inputResHeight", 0u);
+    p.scalingQuality = static_cast<ScalingQualityPreset>(j.value("scalingQuality", 1));
+    p.sharpenLevel = static_cast<SharpenLevel>(j.value("sharpenLevel", 0));
+    p.aspectMode = static_cast<AspectMode>(j.value("aspectMode", 1));
+    p.profileSchemaVersion = j.value("profileSchemaVersion", 0);
 }
 
 std::vector<GameProfile> BuiltInSampleProfiles() {
@@ -74,25 +92,38 @@ std::vector<GameProfile> BuiltInSampleProfiles() {
         p.frameGenMultiplier = FrameGenMultiplier::Off;
         p.vsync = false;
         p.lowGpuOverheadMode = true;
+        p.scalingQuality = ScalingQualityPreset::Performance;
+        p.sharpenLevel = SharpenLevel::Off;
+        p.aspectMode = AspectMode::Fit;
+        p.profileSchemaVersion = GameProfile::kCurrentSchemaVersion;
         p.isBuiltIn = true;
         profiles.push_back(p);
     }
 
-    // GTA V: single-player, GPU-bound on this hardware class. FSR-style
-    // upscaling plus frame generation is where this app can help the most.
+    // GTA V: single-player, GPU-bound on this hardware class. Real
+    // upscaling (Bicubic, a real implemented algorithm here) plus frame
+    // generation is where this app can help the most. NOTE: this
+    // previously defaulted to ScalingAlgorithm::FSR1, which this engine
+    // does not actually implement (it silently fell back to Bilinear) --
+    // changed to a real algorithm so the default never advertises a
+    // capability that isn't genuinely there.
     {
         GameProfile p;
         p.displayName = "Grand Theft Auto V";
         p.executableName = "GTA5.exe";
         p.notes = "Single-player, GPU-bound on entry-level hardware: upscaling from a "
                   "lower render resolution plus 2x frame generation is recommended.";
-        p.scalingAlgorithm = ScalingAlgorithm::FSR1;
+        p.scalingAlgorithm = ScalingAlgorithm::Bicubic;
         p.scalePercent = 75;
         p.windowMode = WindowMode::BorderlessWindow;
         p.frameGenEnabled = true;
         p.frameGenMultiplier = FrameGenMultiplier::X2;
         p.frameGenQuality = FrameGenQualityMode::Balanced;
         p.vsync = false;
+        p.scalingQuality = ScalingQualityPreset::Quality;
+        p.sharpenLevel = SharpenLevel::Medium;
+        p.aspectMode = AspectMode::Fit;
+        p.profileSchemaVersion = GameProfile::kCurrentSchemaVersion;
         p.isBuiltIn = true;
         profiles.push_back(p);
     }
@@ -111,6 +142,10 @@ std::vector<GameProfile> BuiltInSampleProfiles() {
         p.frameGenEnabled = false;
         p.frameGenMultiplier = FrameGenMultiplier::Off;
         p.fpsLimit = 90;
+        p.scalingQuality = ScalingQualityPreset::Balanced;
+        p.sharpenLevel = SharpenLevel::Low;
+        p.aspectMode = AspectMode::Fit;
+        p.profileSchemaVersion = GameProfile::kCurrentSchemaVersion;
         p.isBuiltIn = true;
         profiles.push_back(p);
     }
@@ -128,6 +163,35 @@ std::vector<GameProfile> BuiltInSampleProfiles() {
         p.windowMode = WindowMode::Windowed;
         p.frameGenEnabled = false;
         p.frameGenMultiplier = FrameGenMultiplier::Off;
+        p.scalingQuality = ScalingQualityPreset::Balanced;
+        p.sharpenLevel = SharpenLevel::Off;
+        p.aspectMode = AspectMode::Fit;
+        p.profileSchemaVersion = GameProfile::kCurrentSchemaVersion;
+        p.isBuiltIn = true;
+        profiles.push_back(p);
+    }
+
+    // Custom Application: a generic, neutral starting template for any
+    // other app/game the user wants to add manually. This is NOT a claim
+    // of compatibility with any specific title -- it exists so "Create
+    // Profile" has a sensible, clearly-labeled default rather than forcing
+    // the user to pick one of the game-specific profiles above as a base.
+    {
+        GameProfile p;
+        p.displayName = "Custom Application";
+        p.executableName = "";
+        p.notes = "Generic starting template for any application. Not tied to any "
+                  "specific game -- fill in the executable name and adjust settings "
+                  "as needed.";
+        p.scalingAlgorithm = ScalingAlgorithm::Bilinear;
+        p.scalePercent = 100;
+        p.windowMode = WindowMode::BorderlessWindow;
+        p.frameGenEnabled = false;
+        p.frameGenMultiplier = FrameGenMultiplier::Off;
+        p.scalingQuality = ScalingQualityPreset::Balanced;
+        p.sharpenLevel = SharpenLevel::Off;
+        p.aspectMode = AspectMode::Fit;
+        p.profileSchemaVersion = GameProfile::kCurrentSchemaVersion;
         p.isBuiltIn = true;
         profiles.push_back(p);
     }
