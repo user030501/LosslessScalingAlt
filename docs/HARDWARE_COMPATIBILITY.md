@@ -18,8 +18,8 @@ benchmark run on different hardware.
 ## What was actually verified, and how
 
 All results below come from the automated self-test suite
-(`LSAlt.exe --selftest`), which is 30/30 passing as of this writing (both
-Debug and Release), run against the NVIDIA GeForce MX150 (auto-selected by
+(`LSAlt.exe --selftest`), which is 45/45 passing as of this writing (Debug
+and Release), run against the NVIDIA GeForce MX150 (auto-selected by
 the capability-scored adapter selection over the Intel UHD 620).
 
 | Area | Verified | Notes |
@@ -132,3 +132,11 @@ covered by the automated self-test. Synthetic timings are local D3D11
 dispatch/flush measurements, not real-game FPS or a hardware benchmark
 score. Real-game capture remains unverified on the debloated development
 machine and is not a Phase 7 test dependency.
+
+## Phase 8 synthetic pacing verification
+
+The self-test now includes deterministic frame-scheduler, queue-overflow,
+late-frame, duplicate-frame, ordering, timing, GPU-timestamp, adaptive-
+quality, and synthetic 720p/900p/1080p/1440p workload coverage. These
+results measure the application and D3D11 pipeline on the development
+machine. They are not real-game FPS, frame-time, or compatibility claims.

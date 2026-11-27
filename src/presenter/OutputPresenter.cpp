@@ -219,6 +219,17 @@ void OutputPresenter::ToggleFullscreen() {
 bool OutputPresenter::PresentFrame(ID3D11ShaderResourceView* srv, uint32_t srcWidth, uint32_t srcHeight) {
     if (!m_hwnd || !m_swapChain || !m_rtv) return false;
 
+    LARGE_INTEGER now{}, freq{};
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&freq);
+    const double nowSeconds = freq.QuadPart > 0
+        ? static_cast<double>(now.QuadPart) / static_cast<double>(freq.QuadPart) : 0.0;
+    ++m_presentSequence;
+    m_frameScheduler.Submit(m_presentSequence, nowSeconds);
+    if (!m_frameScheduler.TakeDueFrame(nowSeconds)) {
+        return false;
+    }
+
     if (srcWidth != m_lastSrcWidth || srcHeight != m_lastSrcHeight) {
         m_lastSrcWidth = srcWidth;
         m_lastSrcHeight = srcHeight;

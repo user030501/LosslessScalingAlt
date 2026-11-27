@@ -1,6 +1,8 @@
 #include "FramePacing.h"
 #include "../core/Logger.h"
 #include <algorithm>
+#include <numeric>
+#include <vector>
 
 namespace lsalt {
 
@@ -32,6 +34,7 @@ bool FramePacing::Initialize(ID3D11Device* device, HWND windowForRefreshRate) {
                 if (devMode.dmDisplayFrequency > 1) {
                     m_refreshHz = static_cast<double>(devMode.dmDisplayFrequency);
                 }
+                m_scheduler.SetRefreshRate(m_refreshHz > 0.0 ? m_refreshHz : 60.0);
             }
         }
     }
@@ -57,7 +60,12 @@ void FramePacing::Reset() {
     m_lastSourceTimestamp = 0.0;
     m_avgSourceIntervalSec = 0.0;
     m_droppedFrames = 0;
+    m_duplicateFrames = 0;
+    m_lateFrames = 0;
+    m_cpuProcessingMs = 0.0;
     m_framesGenerated = 0;
+    m_schedulerSubmitSequence = 0;
+    m_scheduler.Reset();
     m_lastMotionEstimationMs = 0.0;
     m_lastInterpolationMs = 0.0;
 }
@@ -98,15 +106,22 @@ void FramePacing::RecordSourceFrame() {
 }
 
 void FramePacing::RecordDisplayedFrame() {
+    m_scheduler.TakeDueFrame(NowSeconds());
     m_displayedTimestamps.push_back(NowSeconds());
     PruneOld(m_displayedTimestamps);
 }
 
 void FramePacing::RecordGeneratedFrame() {
     ++m_framesGenerated;
-    m_generatedTimestamps.push_back(NowSeconds());
+    const double now = NowSeconds();
+    m_generatedTimestamps.push_back(now);
+    m_scheduler.Submit(++m_schedulerSubmitSequence, now);
     PruneOld(m_generatedTimestamps);
 }
+
+void FramePacing::RecordDuplicateFrame() { ++m_duplicateFrames; }
+void FramePacing::RecordLateFrame() { ++m_lateFrames; }
+void FramePacing::RecordCpuProcessingMs(double milliseconds) { m_cpuProcessingMs = milliseconds; }
 
 void FramePacing::BeginGpuTiming(ID3D11DeviceContext* context) {
     PollOldestTiming(context);
@@ -187,18 +202,37 @@ void FramePacing::FillStats(FrameGenStats& stats) {
     stats.interpolationGpuMs = m_lastInterpolationMs;
     stats.totalGpuMs = m_lastMotionEstimationMs + m_lastInterpolationMs;
     stats.framesGenerated = m_framesGenerated;
-    stats.droppedFrames = m_droppedFrames;
+    const FrameSchedulerStats& schedulerStats = m_scheduler.Stats();
+    stats.droppedFrames = m_droppedFrames + schedulerStats.dropped;
+    stats.duplicateFrames = m_duplicateFrames + schedulerStats.duplicate;
+    stats.lateFrames = m_lateFrames + schedulerStats.late;
+    stats.cpuProcessingMs = m_cpuProcessingMs;
+    stats.queueDepth = m_scheduler.QueueDepth();
+    stats.estimatedLatencyMs = stats.totalGpuMs + stats.cpuProcessingMs + stats.lastFrameTimeMs * 0.5;
+
+    if (!m_frameTimeHistory.empty()) {
+        double sum = 0.0;
+        for (float value : m_frameTimeHistory) sum += value;
+        const double mean = sum / m_frameTimeHistory.size();
+        double variance = 0.0;
+        for (float value : m_frameTimeHistory) {
+            const double delta = value - mean;
+            variance += delta * delta;
+        }
+        stats.frameTimeVarianceMs = variance / m_frameTimeHistory.size();
+        std::vector<float> sorted(m_frameTimeHistory.begin(), m_frameTimeHistory.end());
+        std::sort(sorted.begin(), sorted.end());
+        const size_t tailCount = std::max<size_t>(1, sorted.size() / 100);
+        double tailSum = 0.0;
+        for (size_t i = sorted.size() - tailCount; i < sorted.size(); ++i) tailSum += sorted[i];
+        stats.onePercentLowFrameTimeMs = tailSum / tailCount;
+    }
 
     // Real GPU submission backlog: how many of the timing ring's slots are
     // still waiting on the GPU to finish (PollOldestTiming hasn't been able
     // to read them back yet). Phase 2 left this field wired to a setter
     // nothing ever called, which made it a permanent, misleading 0; this is
     // the actual bounded in-flight-work count instead.
-    size_t pending = 0;
-    for (const auto& slot : m_timingSlots) {
-        if (slot.pending) ++pending;
-    }
-    stats.queueDepth = pending;
 
     // Running avg/min/max over samples where something was actually being
     // displayed -- skipping zero-fps idle samples so these reflect "while

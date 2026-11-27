@@ -159,6 +159,9 @@ bool App::Initialize(HINSTANCE hInstance) {
     }
 
     InitializePresenter();
+    if (m_state.frameGenEngine) {
+        m_state.presenter->SetRefreshRate(m_state.frameGenEngine->DetectedRefreshHz());
+    }
     RefreshCaptureExclusionList();
 
     m_state.thermalMonitor = std::make_unique<ThermalMonitor>();
@@ -489,6 +492,9 @@ bool App::AttemptDeviceLossRecovery() {
     }
 
     InitializePresenter();
+    if (m_state.frameGenEngine) {
+        m_state.presenter->SetRefreshRate(m_state.frameGenEngine->DetectedRefreshHz());
+    }
     RefreshCaptureExclusionList();
 
     // Require the user to deliberately re-enable live generation/scaling/

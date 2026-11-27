@@ -99,3 +99,17 @@ aspect-ratio implementations.
 bounded sharpening. It uses `TexturePool` for same-shape output reuse and
 the existing VRAM guard to clamp unsafe requests. The presenter blits the
 scaled SRV directly to the swapchain with no CPU readback.
+
+## Phase 8 pacing and latency
+
+`FrameScheduler` provides bounded latest-wins admission for presentation
+work. Its queue is limited to two entries and never owns or copies GPU
+frame resources. The scheduler uses QPC timestamps and the detected display
+refresh to gate delivery, while accounting for duplicate, late, and dropped
+frames.
+
+`FramePacing` combines source/generated/display timestamps, D3D11 timestamp
+query polling, and CPU timing around frame-generation dispatch. GPU query
+results are read non-blockingly; the ring remains bounded and skipped if GPU
+results are not ready. The dashboard distinguishes measured frame/GPU/CPU
+values from estimated latency and statistically computed 1% low frame time.

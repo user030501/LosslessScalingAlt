@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string>
 #include "../core/Types.h"
+#include "../framegen/FrameScheduler.h"
 
 namespace lsalt {
 
@@ -41,6 +42,8 @@ public:
     bool PreserveAspectRatio() const { return m_preserveAspect; }
     void ToggleFullscreen();
     bool IsFullscreen() const { return m_fullscreen; }
+    void SetRefreshRate(double refreshHz) { m_frameScheduler.SetRefreshRate(refreshHz); }
+    const FrameScheduler& FrameSchedulerStats() const { return m_frameScheduler; }
 
     // Call once per App::RenderFrame tick with the latest pipeline output
     // to show. srv may be null (nothing new yet -- the backbuffer is
@@ -81,6 +84,8 @@ private:
     uint32_t m_clientWidth = 0, m_clientHeight = 0;
     uint32_t m_lastSrcWidth = 0, m_lastSrcHeight = 0;
     D3D11_VIEWPORT m_viewport{};
+    FrameScheduler m_frameScheduler;
+    uint64_t m_presentSequence = 0;
 };
 
 } // namespace lsalt

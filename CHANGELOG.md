@@ -3,6 +3,29 @@
 All notable changes to this project are documented here. Versions are
 development milestones, not public releases.
 
+## [0.8.0] - Frame pacing, latency, and performance optimization
+
+### Added
+- A bounded, deterministic `FrameScheduler` with refresh-rate scheduling,
+  QPC timestamps, late-frame detection, dropped-frame accounting,
+  duplicate-sequence detection, and a latest-bounded queue.
+- Presenter pacing at the detected monitor refresh rate, using latest-frame
+  admission and no unbounded SRV queue.
+- Phase 8 performance fields for 1% low frame time, frame-time variance,
+  duplicate/late frames, CPU processing time, queue depth, and estimated
+  end-to-end latency.
+- Non-blocking D3D11 timestamp-poll integration for GPU/CPU processing
+  measurements and opt-in adaptive Frame Generation quality management.
+- Eight deterministic Phase 8 tests plus synthetic pacing benchmarks at
+  720p, 900p, 1080p, and 1440p.
+
+### Improved
+- Frame-generation source ordering and stale-frame presentation handling
+  remain explicit: frame A is the older frame, frame B is the newer frame,
+  and each generated result is only handed to the presenter once.
+- The presenter and frame-pacing paths avoid CPU readbacks and GPU flushes
+  in normal operation; timestamp queries are polled without blocking.
+
 ## [0.7.0] - Advanced scaling and resolution management
 
 ### Added

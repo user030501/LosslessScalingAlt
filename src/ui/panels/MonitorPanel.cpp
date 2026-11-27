@@ -204,10 +204,28 @@ void DrawMonitorPanel(AppState& state) {
         ImGui::Spacing();
         ImGui::Columns(2, "fg_cols3", false);
         ImGui::Text("GPU Submission Queue Depth");
-        ImGui::Text("%llu / %zu in-flight", static_cast<unsigned long long>(fgStats.queueDepth), FramePacing::kMaxQueueDepth);
+        ImGui::Text("%llu / %zu in-flight", static_cast<unsigned long long>(fgStats.queueDepth), FrameScheduler::kMaxQueueDepth);
         ImGui::NextColumn();
         ImGui::Text("Auto Performance Management");
         ImGui::Text("%s", (state.dynamicPerfManager && state.dynamicPerfManager->AutoEnabled()) ? "Enabled (see Frame Generation tab)" : "Disabled");
+        ImGui::Columns(1);
+
+        ImGui::Spacing();
+        ImGui::Columns(3, "fg_phase8", false);
+        ImGui::Text("1% Low Frame Time"); ImGui::Text("%.2f ms (measured)", fgStats.onePercentLowFrameTimeMs);
+        ImGui::NextColumn();
+        ImGui::Text("Frame-Time Variance"); ImGui::Text("%.2f ms^2 (measured)", fgStats.frameTimeVarianceMs);
+        ImGui::NextColumn();
+        ImGui::Text("Estimated End-to-End Latency"); ImGui::Text("%.2f ms (estimate)", fgStats.estimatedLatencyMs);
+        ImGui::Columns(1);
+
+        ImGui::Spacing();
+        ImGui::Columns(3, "fg_phase8_counters", false);
+        ImGui::Text("Late Frames"); ImGui::Text("%llu", static_cast<unsigned long long>(fgStats.lateFrames));
+        ImGui::NextColumn();
+        ImGui::Text("Duplicate Frames"); ImGui::Text("%llu", static_cast<unsigned long long>(fgStats.duplicateFrames));
+        ImGui::NextColumn();
+        ImGui::Text("CPU Processing Time"); ImGui::Text("%.2f ms (measured)", fgStats.cpuProcessingMs);
         ImGui::Columns(1);
 
         if (!fgStats.autoAdjustReason.empty()) {

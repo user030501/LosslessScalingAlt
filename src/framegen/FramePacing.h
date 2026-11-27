@@ -5,6 +5,7 @@
 #include <deque>
 #include <array>
 #include "FrameGenTypes.h"
+#include "FrameScheduler.h"
 
 namespace lsalt {
 
@@ -27,6 +28,10 @@ public:
     void RecordDisplayedFrame();
     // Call once per interpolated frame produced.
     void RecordGeneratedFrame();
+    void RecordDuplicateFrame();
+    void RecordLateFrame();
+    void RecordCpuProcessingMs(double milliseconds);
+    const FrameScheduler& Scheduler() const { return m_scheduler; }
 
     // Brackets GPU work for timing. Safe to call every frame; internally
     // polls a ring of queries so the render thread is never blocked
@@ -72,7 +77,12 @@ private:
     double m_lastSourceTimestamp = 0.0;
     double m_avgSourceIntervalSec = 0.0;
     uint64_t m_droppedFrames = 0;
+    uint64_t m_duplicateFrames = 0;
+    uint64_t m_lateFrames = 0;
+    double m_cpuProcessingMs = 0.0;
     uint64_t m_framesGenerated = 0;
+    uint64_t m_schedulerSubmitSequence = 0;
+    FrameScheduler m_scheduler;
 
     static constexpr int kTimingSlotCount = 4;
     std::array<TimingSlot, kTimingSlotCount> m_timingSlots;

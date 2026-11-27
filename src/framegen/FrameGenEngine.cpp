@@ -212,6 +212,9 @@ ID3D11ShaderResourceView* FrameGenEngineD3D11::GenerateInterpolatedFrame(ID3D11S
         return nullptr;
     }
 
+    LARGE_INTEGER cpuA{}, cpuB{}, freq{};
+    QueryPerformanceCounter(&cpuA);
+    QueryPerformanceFrequency(&freq);
     m_pacing->RecordSourceFrame();
     m_pacing->BeginGpuTiming(m_context.Get());
 
@@ -229,6 +232,10 @@ ID3D11ShaderResourceView* FrameGenEngineD3D11::GenerateInterpolatedFrame(ID3D11S
 
     if (generated) {
         m_pacing->RecordGeneratedFrame();
+    }
+    QueryPerformanceCounter(&cpuB);
+    if (freq.QuadPart > 0) {
+        m_pacing->RecordCpuProcessingMs(static_cast<double>(cpuB.QuadPart - cpuA.QuadPart) * 1000.0 / freq.QuadPart);
     }
 
     // Phase 5 fix: "displayed" FPS used to be computed as exactly 3x

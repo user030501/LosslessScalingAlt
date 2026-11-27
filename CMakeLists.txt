@@ -41,6 +41,7 @@ add_executable(LSAlt WIN32
     src/framegen/DiagnosticTests.cpp
     src/framegen/ThermalMonitor.cpp
     src/framegen/DynamicPerformanceManager.cpp
+    src/framegen/FrameScheduler.cpp
     src/ui/UIManager.cpp
     src/ui/panels/HomePanel.cpp
     src/ui/panels/ScalingPanel.cpp

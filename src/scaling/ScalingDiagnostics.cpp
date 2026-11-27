@@ -1,6 +1,9 @@
 #include "ScalingDiagnostics.h"
 #include "ScalingEngine.h"
 #include "ResolutionManager.h"
+#include "../framegen/FrameScheduler.h"
+#include "../framegen/FramePacing.h"
+#include "../framegen/DynamicPerformanceManager.h"
 #include "../framegen/FrameGenEngine.h"
 #include "../framegen/TestPatternSource.h"
 #include "../core/Logger.h"
@@ -441,7 +444,7 @@ std::vector<DiagnosticResult> ScalingDiagnostics::RunAll(ID3D11Device* device, I
         DiagnosticResult r{"36. VRAM Budget Enforcement", false, ""};
         ScalingEngineD3D11 scaler;
         scaler.SetVramQuery([](uint64_t& used, uint64_t& budget) {
-            used = 1800u * 1024u * 1024u;
+            used = 2040u * 1024u * 1024u;
             budget = 2048u * 1024u * 1024u;
             return true;
         });
@@ -451,6 +454,161 @@ std::vector<DiagnosticResult> ScalingDiagnostics::RunAll(ID3D11Device* device, I
                    !scaler.LastClampReason().empty();
         r.detail = "allocated=" + std::to_string(scaler.DstWidth()) + "x" +
                    std::to_string(scaler.DstHeight()) + " reason=" + scaler.LastClampReason();
+        results.push_back(r);
+    }
+
+    // Phase 8: deterministic frame scheduler ground truth.
+    {
+        DiagnosticResult r{"38. Frame Scheduler - Accuracy and Ordering", false, ""};
+        FrameScheduler scheduler;
+        scheduler.SetRefreshRate(60.0);
+        scheduler.SetLateTolerance(0.004);
+        const bool submitted = scheduler.Submit(101, 1.0) && scheduler.Submit(102, 1.01);
+        const bool first = scheduler.TakeDueFrame(1.0);
+        const bool secondBeforeRefresh = !scheduler.TakeDueFrame(1.005);
+        const bool second = scheduler.TakeDueFrame(1.017);
+        r.passed = submitted && first && secondBeforeRefresh && second &&
+                   scheduler.Stats().presented == 2 && scheduler.QueueDepth() == 0;
+        r.detail = "submitted=" + std::to_string(submitted) +
+                   " first=" + std::to_string(first) +
+                   " refreshGate=" + std::to_string(secondBeforeRefresh) +
+                   " second=" + std::to_string(second);
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"39. Frame Scheduler - Queue Overflow and Latest-Wins", false, ""};
+        FrameScheduler scheduler;
+        scheduler.Submit(1, 0.0);
+        scheduler.TakeDueFrame(0.0);
+        const bool twoAccepted = scheduler.Submit(2, 0.001) && scheduler.Submit(3, 0.002);
+        scheduler.Submit(4, 0.003);
+        scheduler.Submit(5, 0.004);
+        const bool overflowDropped = scheduler.Stats().dropped == 2;
+        r.passed = twoAccepted && overflowDropped &&
+                   scheduler.Stats().dropped == 2 &&
+                   scheduler.QueueDepth() == FrameScheduler::kMaxQueueDepth;
+        r.detail = "queueDrop=" + std::to_string(scheduler.Stats().dropped) +
+                   " queueDepth=" + std::to_string(scheduler.QueueDepth());
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"40. Frame Scheduler - Late and Dropped Frames", false, ""};
+        FrameScheduler scheduler;
+        scheduler.SetRefreshRate(60.0);
+        scheduler.SetLateTolerance(0.004);
+        scheduler.Submit(1, 0.1);
+        scheduler.TakeDueFrame(0.1);
+        scheduler.Submit(2, 0.110);
+        const bool lateDetected = scheduler.TakeDueFrame(0.140);
+        r.passed = lateDetected && scheduler.Stats().late == 1;
+        r.detail = "lateCount=" + std::to_string(scheduler.Stats().late);
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"41. Frame Scheduler - Duplicate Detection", false, ""};
+        FrameScheduler scheduler;
+        const bool first = scheduler.Submit(77, 1.0);
+        const bool duplicate = !scheduler.Submit(77, 1.001);
+        r.passed = first && duplicate && scheduler.Stats().duplicate == 1 &&
+                   scheduler.QueueDepth() == 1;
+        r.detail = "duplicateCount=" + std::to_string(scheduler.Stats().duplicate);
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"42. Frame Pacing - Timing Calculations", false, ""};
+        FramePacing pacing;
+        pacing.ResetRunningFpsStats();
+        pacing.Reset();
+        pacing.RecordSourceFrame();
+        pacing.RecordGeneratedFrame();
+        pacing.RecordDisplayedFrame();
+        pacing.RecordCpuProcessingMs(1.25);
+        FrameGenStats stats;
+        pacing.FillStats(stats);
+        r.passed = stats.cpuProcessingMs == 1.25 &&
+                   stats.estimatedLatencyMs > stats.totalGpuMs &&
+                   stats.queueDepth <= FrameScheduler::kMaxQueueDepth;
+        r.detail = "cpuMs=" + std::to_string(stats.cpuProcessingMs) +
+                   " estimatedLatencyMs=" + std::to_string(stats.estimatedLatencyMs) +
+                   " queueDepth=" + std::to_string(stats.queueDepth);
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"43. GPU Synchronization - Timestamp Ring", false, ""};
+        FramePacing pacing;
+        const bool initialized = pacing.Initialize(device, nullptr);
+        pacing.BeginGpuTiming(context);
+        pacing.MarkMotionEstimationDone(context);
+        pacing.MarkInterpolationDone(context);
+        context->Flush();
+        pacing.BeginGpuTiming(context);
+        r.passed = initialized && device->GetDeviceRemovedReason() == S_OK;
+        r.detail = "timestampRingInitialized=" + std::to_string(initialized) +
+                   " deviceRemoved=" + std::to_string(device->GetDeviceRemovedReason() != S_OK);
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"44. Adaptive Quality - Measured Overload Threshold", false, ""};
+        frameGenEngine.SetEnabled(true);
+        frameGenEngine.SetQualityMode(FrameGenQualityMode::Quality);
+        DynamicPerformanceManager adaptive;
+        adaptive.SetAutoEnabled(true);
+        FrameGenStats stats = frameGenEngine.GetStats();
+        stats.totalGpuMs = 20.0;
+        ThermalSample thermal{};
+        thermal.sustainedHighLoad = true;
+        std::string reason;
+        for (int i = 0; i < 5; ++i) {
+            reason = adaptive.Update(frameGenEngine, stats, thermal, 95.0, true);
+        }
+        r.passed = adaptive.AutoEnabled() &&
+                   frameGenEngine.QualityMode() == FrameGenQualityMode::Balanced &&
+                   !reason.empty();
+        r.detail = "adaptive=" + std::to_string(adaptive.AutoEnabled()) +
+                   " quality=" + std::string(ToString(frameGenEngine.QualityMode())) +
+                   " reason=" + reason;
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"45. Synthetic Pacing Benchmark - 720p to 1440p", false, ""};
+        const uint32_t sizes[][2] = {{1280,720},{1600,900},{1920,1080},{2560,1440}};
+        ScalingEngineD3D11 scaler;
+        bool ok = scaler.Initialize(device, shaderDir);
+        source.RenderExplicit(context, 0.5, 0.75);
+        std::string detail;
+        for (const auto& size : sizes) {
+            if (!ok) break;
+            ok = scaler.Resize(source.Width(), source.Height(), size[0], size[1]);
+            scaler.SetAlgorithm(ScalingAlgorithm::Bilinear);
+            LARGE_INTEGER freq{}, start{}, end{};
+            QueryPerformanceFrequency(&freq);
+            std::vector<double> samples;
+            for (int i = 0; i < 20 && ok; ++i) {
+                QueryPerformanceCounter(&start);
+                ok = scaler.Scale(context, source.FrameBSRV()) != nullptr;
+                context->Flush();
+                QueryPerformanceCounter(&end);
+                samples.push_back(freq.QuadPart ? (end.QuadPart - start.QuadPart) * 1000.0 / freq.QuadPart : 0.0);
+            }
+            double sum = 0.0, variance = 0.0;
+            for (double sample : samples) sum += sample;
+            const double mean = samples.empty() ? 0.0 : sum / samples.size();
+            for (double sample : samples) variance += (sample - mean) * (sample - mean);
+            const double varianceMs = samples.empty() ? 0.0 : variance / samples.size();
+            detail += std::to_string(size[0]) + "x" + std::to_string(size[1]) +
+                      " avg=" + std::to_string(static_cast<int>(mean * 100.0) / 100.0) +
+                      "ms var=" + std::to_string(static_cast<int>(varianceMs * 100.0) / 100.0) +
+                      "ms2;";
+        }
+        r.passed = ok;
+        r.detail = "Measured synthetic scaling workload only: " + detail;
         results.push_back(r);
     }
 

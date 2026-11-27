@@ -60,6 +60,12 @@ struct FrameGenStats {
     uint64_t framesGenerated = 0;
     uint64_t droppedFrames = 0;
     uint64_t queueDepth = 0;
+    uint64_t duplicateFrames = 0;
+    uint64_t lateFrames = 0;
+    double onePercentLowFrameTimeMs = 0.0;
+    double frameTimeVarianceMs = 0.0;
+    double estimatedLatencyMs = 0.0;
+    double cpuProcessingMs = 0.0;
 
     // Phase 4: running avg/min/max of displayedFps since the engine was
     // last (re)enabled -- real incremental statistics over the same real

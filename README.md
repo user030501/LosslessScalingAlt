@@ -52,6 +52,10 @@ what was verified on real hardware versus what's a known limitation.
   letterbox/pillarbox placement, bounded sharpening, synthetic previews,
   and reusable GPU textures. FSR1/NVIDIA Image Scaling are not
   advertised as implemented.
+- **Phase 8 frame pacing**: bounded frame scheduling, QPC timing, late/
+  dropped/duplicate detection, GPU timestamp polling, adaptive quality
+  opt-in, and measured vs estimated performance fields. Synthetic pacing
+  benchmarks are explicitly labeled and are not real-game FPS results.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the module map and
 real data-flow diagrams, and [`docs/BUILD.md`](docs/BUILD.md) /
