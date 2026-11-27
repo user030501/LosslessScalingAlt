@@ -3,6 +3,30 @@
 All notable changes to this project are documented here. Versions are
 development milestones, not public releases.
 
+## [0.7.0] - Advanced scaling and resolution management
+
+### Added
+- A centralized `ResolutionManager` for custom/automatic input and output
+  sizes, fit/stretch/integer placement, letterboxing/pillarboxing, invalid
+  dimensions, and D3D11-safe maximum dimensions.
+- Sharpening levels (Off/Low/Medium/High), quality/performance presets,
+  and resolution/aspect/sharpening controls in the Scaling panel.
+- Texture-pool reuse for repeated scaling resolutions and VRAM-budget
+  admission/clamping for output allocations.
+- Phase 7 profile fields for input/output resolution, quality, sharpening,
+  aspect mode, frame generation, and GPU preference, plus backward-
+  compatible profile migration and legacy vendor-algorithm migration.
+- Synthetic Phase 7 diagnostics for resolution ground truth, invalid sizes,
+  integer scaling, sharpening, texture reuse, VRAM budget enforcement,
+  and the 640x480 through 2560x1440 benchmark matrix.
+
+### Improved
+- Presenter swapchain resize, viewport/scissor handling, fullscreen/DPI
+  behavior, and aspect-ratio calculations now use the same resolution
+  placement rules as the scaling engine.
+- Pixel-center UV sampling and border handling remain GPU-compute based;
+  no CPU fallback or vendor-specific FSR1/NIS implementation is claimed.
+
 ## [0.6.0] - Real-game integration: Output Presenter, pipeline wiring
 
 ### Added

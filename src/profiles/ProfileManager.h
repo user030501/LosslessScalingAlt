@@ -29,6 +29,7 @@ public:
 
     void AddOrUpdate(const GameProfile& profile);
     bool Remove(const std::string& displayName); // built-in profiles cannot be removed
+    bool MigrateIfNeeded();
 
     std::wstring ProfilesFilePath() const;
 

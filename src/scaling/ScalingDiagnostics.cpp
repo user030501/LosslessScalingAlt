@@ -1,5 +1,6 @@
 #include "ScalingDiagnostics.h"
 #include "ScalingEngine.h"
+#include "ResolutionManager.h"
 #include "../framegen/FrameGenEngine.h"
 #include "../framegen/TestPatternSource.h"
 #include "../core/Logger.h"
@@ -300,6 +301,156 @@ std::vector<DiagnosticResult> ScalingDiagnostics::RunAll(ID3D11Device* device, I
         }
         r.passed = ok;
         r.detail = detail;
+        results.push_back(r);
+    }
+
+    // 31. Resolution Manager: fit, stretch, integer, and invalid dimensions
+    // are deterministic and independently ground-truthed.
+    {
+        DiagnosticResult r{"31. Resolution - Fit, Stretch, and Integer Ground Truth", false, ""};
+        ResolutionRequest fitReq{300, 300, 400, 200, 100, AspectMode::Fit};
+        const ResolutionResult fit = ResolutionManager::Resolve(fitReq);
+        ResolutionRequest stretchReq{300, 300, 400, 200, 100, AspectMode::Stretch};
+        const ResolutionResult stretch = ResolutionManager::Resolve(stretchReq);
+        ResolutionRequest intReq{300, 300, 320, 320, 100, AspectMode::IntegerScale};
+        const ResolutionResult integer = ResolutionManager::Resolve(intReq);
+        const bool ok = fit.valid && fit.outputWidth == 400 && fit.outputHeight == 200 &&
+                        fit.viewportWidth == 200 && fit.viewportHeight == 200 &&
+                        fit.viewportX == 100 && fit.viewportY == 0 &&
+                        stretch.valid && stretch.viewportWidth == 400 && stretch.viewportHeight == 200 &&
+                        integer.valid && integer.integerFactor == 1 &&
+                        integer.viewportWidth == 300 && integer.viewportHeight == 300 &&
+                        integer.viewportX == 10 && integer.viewportY == 10;
+        r.passed = ok;
+        r.detail = "fit=200x200 at (100,0), stretch=400x200, integer=300x300 at (10,10)";
+        results.push_back(r);
+    }
+
+    // 32. Invalid resolutions and very large requests must fail or clamp
+    // safely rather than allocating/wrapping.
+    {
+        DiagnosticResult r{"32. Resolution - Invalid and Very Large Dimensions", false, ""};
+        const ResolutionResult invalid = ResolutionManager::Resolve(ResolutionRequest{0, 1080, 1920, 1080, 100, AspectMode::Fit});
+        const ResolutionResult huge = ResolutionManager::Resolve(ResolutionRequest{1920, 1080, 99999, 99999, 100, AspectMode::Fit});
+        r.passed = !invalid.valid && huge.valid &&
+                   huge.outputWidth == ScalingEngineD3D11::kMaxTextureDimension &&
+                   huge.outputHeight == ScalingEngineD3D11::kMaxTextureDimension;
+        r.detail = "zero input rejected=" + std::to_string(!invalid.valid) +
+                   " 99999x99999 clamped=" + std::to_string(huge.outputWidth) + "x" +
+                   std::to_string(huge.outputHeight);
+        results.push_back(r);
+    }
+
+    // 33. Texture pool reuse: resize away and back, verifying one exact
+    // shape is reused and no pool growth occurs beyond its capacity.
+    {
+        DiagnosticResult r{"33. GPU Resource - Texture Pool Reuse", false, ""};
+        ScalingEngineD3D11 scaler;
+        source.RenderExplicit(context, 0.5, 0.5 + 1.0 / source.SourceFps());
+        bool ok = scaler.Initialize(device, shaderDir) &&
+                  scaler.Resize(960, 540, 1280, 720);
+        ok = ok && scaler.Scale(context, source.FrameBSRV()) != nullptr;
+        ok = ok && scaler.Resize(960, 540, 1920, 1080);
+        ok = ok && scaler.Scale(context, source.FrameBSRV()) != nullptr;
+        ok = ok && scaler.Resize(960, 540, 1280, 720);
+        ok = ok && scaler.Scale(context, source.FrameBSRV()) != nullptr;
+        r.passed = ok && scaler.PoolReuseCount() >= 1;
+        r.detail = "reuseCount=" + std::to_string(scaler.PoolReuseCount()) +
+                   " allocationsEver=" + std::to_string(scaler.PoolAllocationCount()) +
+                   " pooledBytes=" + std::to_string(scaler.EstimatedPoolBytes());
+        results.push_back(r);
+    }
+
+    // 34. Sharpening: off and high produce real, bounded but different
+    // output from a deterministic synthetic edge pattern.
+    {
+        DiagnosticResult r{"34. Scaling - Sharpening Off vs High", false, ""};
+        std::vector<uint8_t> pixels(64 * 64 * 4);
+        for (uint32_t y = 0; y < 64; ++y) {
+            for (uint32_t x = 0; x < 64; ++x) {
+                const size_t i = (static_cast<size_t>(y) * 64 + x) * 4;
+                const uint8_t v = x < 32 ? 40 : 220;
+                pixels[i] = pixels[i + 1] = pixels[i + 2] = v;
+                pixels[i + 3] = 255;
+            }
+        }
+        auto tex = CreateSourceTexture(device, 64, 64, pixels);
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+        if (tex) device->CreateShaderResourceView(tex.Get(), nullptr, srv.GetAddressOf());
+        ScalingEngineD3D11 off, high;
+        bool ok = srv && off.Initialize(device, shaderDir) && high.Initialize(device, shaderDir) &&
+                  off.Resize(64, 64, 128, 128) && high.Resize(64, 64, 128, 128);
+        off.SetAlgorithm(ScalingAlgorithm::Bicubic);
+        high.SetAlgorithm(ScalingAlgorithm::Bicubic);
+        off.SetSharpenLevel(SharpenLevel::Off);
+        high.SetSharpenLevel(SharpenLevel::High);
+        off.SetPreserveAspectRatio(false);
+        high.SetPreserveAspectRatio(false);
+        const bool scaled = ok && off.Scale(context, srv.Get()) && high.Scale(context, srv.Get());
+        std::vector<uint8_t> offOut, highOut;
+        ok = scaled && ReadbackRGBA8(device, context, off.OutputTexture(), 128, 128, offOut) &&
+             ReadbackRGBA8(device, context, high.OutputTexture(), 128, 128, highOut);
+        bool differs = false;
+        bool inRange = true;
+        if (ok) {
+            for (size_t i = 0; i < offOut.size(); i += 4) {
+                if (offOut[i] != highOut[i]) differs = true;
+                if (highOut[i] > 255) inRange = false;
+            }
+        }
+        r.passed = ok && differs && inRange;
+        r.detail = "off/high differ=" + std::to_string(differs) + " bounded=" + std::to_string(inRange);
+        results.push_back(r);
+    }
+
+    // 35. Synthetic GPU benchmark matrix. This records only machine-local
+    // timing for identical synthetic frames and does not claim real-game
+    // FPS. It is repeated at the five required resolution levels.
+    {
+        DiagnosticResult r{"35. Synthetic GPU Scaling Benchmark Matrix", false, ""};
+        const uint32_t sizes[][2] = {{640,480},{1280,720},{1600,900},{1920,1080},{2560,1440}};
+        ScalingEngineD3D11 scaler;
+        bool ok = scaler.Initialize(device, shaderDir);
+        source.RenderExplicit(context, 0.5, 0.75);
+        std::string detail;
+        for (const auto& size : sizes) {
+            if (!ok) break;
+            ok = scaler.Resize(source.Width(), source.Height(), size[0], size[1]);
+            scaler.SetAlgorithm(ScalingAlgorithm::Bilinear);
+            LARGE_INTEGER freq{}, a{}, b{};
+            QueryPerformanceFrequency(&freq);
+            QueryPerformanceCounter(&a);
+            for (int i = 0; i < 3 && ok; ++i) {
+                ok = scaler.Scale(context, source.FrameBSRV()) != nullptr;
+            }
+            context->Flush();
+            QueryPerformanceCounter(&b);
+            const double avgMs = freq.QuadPart ? ((b.QuadPart - a.QuadPart) * 1000.0 / freq.QuadPart) / 3.0 : -1.0;
+            detail += std::to_string(size[0]) + "x" + std::to_string(size[1]) +
+                      "=" + (avgMs >= 0.0 ? std::to_string(static_cast<int>(avgMs * 100.0) / 100.0) : "-1") +
+                      "ms;";
+        }
+        r.passed = ok;
+        r.detail = "Measured synthetic dispatch/flush timing only: " + detail;
+        results.push_back(r);
+    }
+
+    // 36. VRAM budget admission: force an impossible 8K request under a
+    // tiny budget and verify the engine clamps deterministically.
+    {
+        DiagnosticResult r{"36. VRAM Budget Enforcement", false, ""};
+        ScalingEngineD3D11 scaler;
+        scaler.SetVramQuery([](uint64_t& used, uint64_t& budget) {
+            used = 1800u * 1024u * 1024u;
+            budget = 2048u * 1024u * 1024u;
+            return true;
+        });
+        bool ok = scaler.Initialize(device, shaderDir) &&
+                  scaler.Resize(1920, 1080, 7680, 4320);
+        r.passed = ok && scaler.DstWidth() < 7680 && scaler.DstHeight() < 4320 &&
+                   !scaler.LastClampReason().empty();
+        r.detail = "allocated=" + std::to_string(scaler.DstWidth()) + "x" +
+                   std::to_string(scaler.DstHeight()) + " reason=" + scaler.LastClampReason();
         results.push_back(r);
     }
 

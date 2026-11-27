@@ -74,3 +74,15 @@ it creates:
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for what's implemented versus
 known limitations, and [`INSTALLATION.md`](INSTALLATION.md) for portable/
 installer packaging.
+## Phase 7 validation
+
+Build both configurations and run:
+
+```text
+LSAlt.exe --selftest
+```
+
+The self-test includes the original scenarios plus resolution, sharpening,
+GPU reuse, migration, VRAM, benchmark-matrix, and presenter checks. A
+passing exit code means the automated deterministic scenarios passed on
+the current machine; it does not claim real-game compatibility.

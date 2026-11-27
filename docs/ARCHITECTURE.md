@@ -86,3 +86,16 @@ current way to see it.
   generation step, easy to diff in source control.
 - **vcpkg manifest mode**: pins dependency versions per-project without a
   global install.
+## Phase 7 resolution and scaling
+
+`ResolutionManager` is a deterministic CPU-side sizing and placement module.
+It validates source/destination sizes, applies automatic scale percentages,
+clamps dimensions to the D3D11-safe maximum, and computes the centered
+viewport for Fit, Stretch, and Integer Scale modes. It is shared by
+`ScalingEngineD3D11` and `OutputPresenter`, avoiding two incompatible
+aspect-ratio implementations.
+
+`ScalingEngineD3D11` performs one compute dispatch for sampling plus fused
+bounded sharpening. It uses `TexturePool` for same-shape output reuse and
+the existing VRAM guard to clamp unsafe requests. The presenter blits the
+scaled SRV directly to the swapchain with no CPU readback.

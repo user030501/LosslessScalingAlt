@@ -1,4 +1,5 @@
 #include "ScalingEngine.h"
+#include "ResolutionManager.h"
 #include "../framegen/ShaderCompiler.h"
 #include "../core/Logger.h"
 
@@ -95,43 +96,18 @@ float ScalingEngineD3D11::SharpenAmountFor(SharpenLevel level) const {
 }
 
 void ScalingEngineD3D11::RecomputeViewport() {
-    if (m_srcWidth == 0 || m_srcHeight == 0 || m_dstWidth == 0 || m_dstHeight == 0) {
-        m_viewportX = m_viewportY = 0;
-        m_viewportW = m_viewportH = 0;
-        m_integerFactor = 1;
-        return;
-    }
-
-    switch (EffectiveAspectMode()) {
-        case AspectMode::IntegerScale: {
-            // Aspect-preserving by definition: the largest whole-number
-            // factor that still fits in both dimensions.
-            const uint32_t factorX = m_dstWidth / m_srcWidth;
-            const uint32_t factorY = m_dstHeight / m_srcHeight;
-            m_integerFactor = std::max(1u, std::min(factorX, factorY));
-            m_viewportW = m_srcWidth * m_integerFactor;
-            m_viewportH = m_srcHeight * m_integerFactor;
-            break;
-        }
-        case AspectMode::Fit: {
-            const double scaleX = static_cast<double>(m_dstWidth) / m_srcWidth;
-            const double scaleY = static_cast<double>(m_dstHeight) / m_srcHeight;
-            const double scale = std::min(scaleX, scaleY);
-            m_viewportW = static_cast<uint32_t>(std::lround(m_srcWidth * scale));
-            m_viewportH = static_cast<uint32_t>(std::lround(m_srcHeight * scale));
-            m_integerFactor = 1;
-            break;
-        }
-        case AspectMode::Stretch:
-        default:
-            m_viewportW = m_dstWidth;
-            m_viewportH = m_dstHeight;
-            m_integerFactor = 1;
-            break;
-    }
-
-    m_viewportX = (m_dstWidth > m_viewportW) ? (m_dstWidth - m_viewportW) / 2 : 0;
-    m_viewportY = (m_dstHeight > m_viewportH) ? (m_dstHeight - m_viewportH) / 2 : 0;
+    ResolutionRequest request;
+    request.inputWidth = m_srcWidth;
+    request.inputHeight = m_srcHeight;
+    request.outputWidth = m_dstWidth;
+    request.outputHeight = m_dstHeight;
+    request.aspectMode = EffectiveAspectMode();
+    const ResolutionResult resolved = ResolutionManager::Resolve(request);
+    m_viewportX = resolved.viewportX;
+    m_viewportY = resolved.viewportY;
+    m_viewportW = resolved.viewportWidth;
+    m_viewportH = resolved.viewportHeight;
+    m_integerFactor = resolved.integerFactor;
 }
 
 void ScalingEngineD3D11::ClampRequestedSize(uint32_t& dstWidth, uint32_t& dstHeight) {

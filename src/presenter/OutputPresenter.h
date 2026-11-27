@@ -5,6 +5,7 @@
 #include <dxgi1_2.h>
 #include <cstdint>
 #include <string>
+#include "../core/Types.h"
 
 namespace lsalt {
 
@@ -36,6 +37,7 @@ public:
     bool IsOpen() const { return m_hwnd != nullptr; }
 
     void SetPreserveAspectRatio(bool preserve) { m_preserveAspect = preserve; }
+    void SetAspectMode(AspectMode mode) { m_aspectMode = mode; m_preserveAspect = mode != AspectMode::Stretch; }
     bool PreserveAspectRatio() const { return m_preserveAspect; }
     void ToggleFullscreen();
     bool IsFullscreen() const { return m_fullscreen; }
@@ -65,12 +67,14 @@ private:
     Microsoft::WRL::ComPtr<ID3D11VertexShader> m_vs;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_ps;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> m_sampler;
+    Microsoft::WRL::ComPtr<ID3D11RasterizerState> m_rasterizerState;
     std::wstring m_shaderDir;
     bool m_shadersReady = false;
 
     HWND m_hwnd = nullptr;
     bool m_fullscreen = false;
     bool m_preserveAspect = true;
+    AspectMode m_aspectMode = AspectMode::Fit;
     WINDOWPLACEMENT m_savedPlacement{};
     LONG_PTR m_savedStyle = 0;
 

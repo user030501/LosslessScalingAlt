@@ -47,6 +47,11 @@ what was verified on real hardware versus what's a known limitation.
   with CSV export, real CPU/RAM/VRAM/GPU-utilization/CPU-temperature
   telemetry — fields that can't be measured honestly say so (`N/A`)
   instead of showing an invented number.
+- **Phase 7 resolution and scaling controls**: custom input/output
+  resolutions, automatic size, Fit/Stretch/Integer Scaling, real
+  letterbox/pillarbox placement, bounded sharpening, synthetic previews,
+  and reusable GPU textures. FSR1/NVIDIA Image Scaling are not
+  advertised as implemented.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the module map and
 real data-flow diagrams, and [`docs/BUILD.md`](docs/BUILD.md) /

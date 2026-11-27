@@ -247,6 +247,33 @@ std::vector<DiagnosticResult> ProfileDiagnostics::RunAll(ProfileManager& profile
         results.push_back(r);
     }
 
+    // 37. Legacy profile migration: vendor placeholders and missing schema
+    // fields are converted to real defaults and persisted explicitly.
+    {
+        DiagnosticResult r{"37. Configuration Migration", false, ""};
+        GameProfile legacy;
+        legacy.displayName = "__LSAlt_SelfTest_Legacy_Profile__";
+        legacy.executableName = "zzz_lsalt_legacy.exe";
+        legacy.scalingAlgorithm = ScalingAlgorithm::FSR1;
+        legacy.profileSchemaVersion = 0;
+        legacy.scalingQuality = ScalingQualityPreset::Balanced;
+        legacy.sharpenLevel = SharpenLevel::Off;
+        legacy.aspectMode = AspectMode::Fit;
+        profiles.AddOrUpdate(legacy);
+        const bool migrated = profiles.MigrateIfNeeded();
+        GameProfile* seen = profiles.Find(legacy.displayName);
+        const bool valuesOk = seen && seen->scalingAlgorithm == ScalingAlgorithm::Bilinear &&
+                              seen->profileSchemaVersion == GameProfile::kCurrentSchemaVersion &&
+                              seen->aspectMode == AspectMode::Fit;
+        profiles.Save();
+        const bool removed = profiles.Remove(legacy.displayName);
+        r.passed = migrated && valuesOk && removed;
+        r.detail = "legacyMigrated=" + std::to_string(migrated) +
+                   " realAlgorithmAndSchema=" + std::to_string(valuesOk) +
+                   " cleanedUp=" + std::to_string(removed);
+        results.push_back(r);
+    }
+
     return results;
 }
 

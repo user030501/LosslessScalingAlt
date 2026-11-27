@@ -52,6 +52,10 @@ void ProfileManager::Load() {
         nlohmann::json j;
         file >> j;
         m_profiles = j.get<std::vector<GameProfile>>();
+        if (MigrateIfNeeded()) {
+            Save();
+            Logger::Instance().Info("ProfileManager", "Migrated legacy profile fields and re-saved profiles.json.");
+        }
         Logger::Instance().Info("ProfileManager", "Loaded " + std::to_string(m_profiles.size()) + " profile(s).");
     } catch (const std::exception& e) {
         Logger::Instance().Error("ProfileManager", std::string("Failed to parse profiles.json: ") + e.what());
@@ -113,6 +117,28 @@ bool ProfileManager::Remove(const std::string& displayName) {
     m_profiles.erase(it);
     Save();
     return true;
+}
+
+bool ProfileManager::MigrateIfNeeded() {
+    bool changed = false;
+    for (GameProfile& p : m_profiles) {
+        if (p.profileSchemaVersion < GameProfile::kCurrentSchemaVersion) {
+            p.profileSchemaVersion = GameProfile::kCurrentSchemaVersion;
+            changed = true;
+        }
+        // These vendor names are not implemented by this application.
+        // Legacy files that selected them must migrate to a real engine
+        // algorithm rather than appearing as a supported feature.
+        if (p.scalingAlgorithm == ScalingAlgorithm::FSR1 ||
+            p.scalingAlgorithm == ScalingAlgorithm::NIS) {
+            p.scalingAlgorithm = ScalingAlgorithm::Bilinear;
+            changed = true;
+        }
+        if (p.targetResWidth != 0 && p.inputResWidth == 0) {
+            p.inputResWidth = 0;
+        }
+    }
+    return changed;
 }
 
 } // namespace lsalt

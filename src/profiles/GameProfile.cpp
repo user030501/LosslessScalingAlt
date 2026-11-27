@@ -40,6 +40,9 @@ void from_json(const nlohmann::json& j, GameProfile& p) {
     p.executableName = j.value("executableName", std::string{});
     p.notes = j.value("notes", std::string{});
     p.scalingAlgorithm = static_cast<ScalingAlgorithm>(j.value("scalingAlgorithm", 1));
+    if (p.scalingAlgorithm == ScalingAlgorithm::FSR1 || p.scalingAlgorithm == ScalingAlgorithm::NIS) {
+        p.scalingAlgorithm = ScalingAlgorithm::Bilinear;
+    }
     p.scalePercent = j.value("scalePercent", 100);
     p.preserveAspectRatio = j.value("preserveAspectRatio", true);
     p.windowMode = static_cast<WindowMode>(j.value("windowMode", 1));

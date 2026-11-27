@@ -124,3 +124,11 @@ still reports "not supported" on this specific machine.
   scope; both fall back to Bilinear with a logged warning rather than
   silently doing nothing.
 - GPU temperature reporting (requires NVAPI/ADL).
+## Phase 7 verification scope
+
+Resolution calculation, scaling pixel ground truth, texture reuse, profile
+migration, presenter lifecycle, and synthetic benchmark timing are
+covered by the automated self-test. Synthetic timings are local D3D11
+dispatch/flush measurements, not real-game FPS or a hardware benchmark
+score. Real-game capture remains unverified on the debloated development
+machine and is not a Phase 7 test dependency.

@@ -1,6 +1,7 @@
 #include "OutputPresenter.h"
 #include "../framegen/ShaderCompiler.h"
 #include "../core/Logger.h"
+#include "../scaling/ResolutionManager.h"
 
 #include <algorithm>
 
@@ -42,6 +43,15 @@ bool OutputPresenter::Initialize(ID3D11Device* device, ID3D11DeviceContext* cont
     sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
     if (FAILED(device->CreateSamplerState(&sampDesc, m_sampler.ReleaseAndGetAddressOf()))) {
         Logger::Instance().Error("OutputPresenter", "Failed to create the presenter's sampler state.");
+        return false;
+    }
+
+    D3D11_RASTERIZER_DESC rasterDesc{};
+    rasterDesc.FillMode = D3D11_FILL_SOLID;
+    rasterDesc.CullMode = D3D11_CULL_NONE;
+    rasterDesc.ScissorEnable = TRUE;
+    if (FAILED(device->CreateRasterizerState(&rasterDesc, m_rasterizerState.ReleaseAndGetAddressOf()))) {
+        Logger::Instance().Error("OutputPresenter", "Failed to create the presenter's rasterizer state.");
         return false;
     }
 
@@ -166,16 +176,17 @@ void OutputPresenter::ResizeSwapChain(uint32_t width, uint32_t height) {
 }
 
 void OutputPresenter::RecomputeViewport(uint32_t srcWidth, uint32_t srcHeight) {
-    float x = 0, y = 0, w = static_cast<float>(m_clientWidth), h = static_cast<float>(m_clientHeight);
-    if (m_preserveAspect && srcWidth > 0 && srcHeight > 0 && m_clientWidth > 0 && m_clientHeight > 0) {
-        const double scaleX = static_cast<double>(m_clientWidth) / srcWidth;
-        const double scaleY = static_cast<double>(m_clientHeight) / srcHeight;
-        const double scale = std::min(scaleX, scaleY);
-        w = static_cast<float>(srcWidth * scale);
-        h = static_cast<float>(srcHeight * scale);
-        x = static_cast<float>((m_clientWidth - w) * 0.5);
-        y = static_cast<float>((m_clientHeight - h) * 0.5);
-    }
+    ResolutionRequest request;
+    request.inputWidth = srcWidth;
+    request.inputHeight = srcHeight;
+    request.outputWidth = m_clientWidth;
+    request.outputHeight = m_clientHeight;
+    request.aspectMode = m_aspectMode;
+    const ResolutionResult resolved = ResolutionManager::Resolve(request);
+    const float w = resolved.valid ? static_cast<float>(resolved.viewportWidth) : std::max(m_clientWidth, 1u);
+    const float h = resolved.valid ? static_cast<float>(resolved.viewportHeight) : std::max(m_clientHeight, 1u);
+    const float x = resolved.valid ? static_cast<float>(resolved.viewportX) : 0.0f;
+    const float y = resolved.valid ? static_cast<float>(resolved.viewportY) : 0.0f;
     m_viewport = D3D11_VIEWPORT{x, y, std::max(w, 1.0f), std::max(h, 1.0f), 0.0f, 1.0f};
 }
 
@@ -220,6 +231,9 @@ bool OutputPresenter::PresentFrame(ID3D11ShaderResourceView* srv, uint32_t srcWi
 
     if (srv && srcWidth > 0 && srcHeight > 0) {
         m_context->RSSetViewports(1, &m_viewport);
+        D3D11_RECT scissor{0, 0, static_cast<LONG>(m_clientWidth), static_cast<LONG>(m_clientHeight)};
+        m_context->RSSetScissorRects(1, &scissor);
+        m_context->RSSetState(m_rasterizerState.Get());
         m_context->IASetInputLayout(nullptr);
         m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         m_context->VSSetShader(m_vs.Get(), nullptr, 0);
@@ -241,8 +255,24 @@ LRESULT OutputPresenter::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARA
     switch (msg) {
         case WM_SIZE:
             if (wParam != SIZE_MINIMIZED) {
-                ResizeSwapChain(LOWORD(lParam), HIWORD(lParam));
+                const uint32_t width = LOWORD(lParam);
+                const uint32_t height = HIWORD(lParam);
+                if (width > 0 && height > 0) ResizeSwapChain(width, height);
             }
+            return 0;
+        case WM_EXITSIZEMOVE: {
+            RECT client{};
+            GetClientRect(hwnd, &client);
+            const uint32_t width = static_cast<uint32_t>(std::max(0L, client.right - client.left));
+            const uint32_t height = static_cast<uint32_t>(std::max(0L, client.bottom - client.top));
+            if (width > 0 && height > 0) ResizeSwapChain(width, height);
+            return 0;
+        }
+        case WM_DPICHANGED:
+            // Window placement and client size are authoritative after this
+            // message. The next size or exit-resize event also rebinds the
+            // swapchain; here we at least recompute the content viewport.
+            RecomputeViewport(m_lastSrcWidth, m_lastSrcHeight);
             return 0;
         case WM_KEYDOWN:
             if (wParam == VK_ESCAPE) {

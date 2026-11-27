@@ -22,6 +22,7 @@ add_executable(LSAlt WIN32
     src/capture/CaptureEngineWGC.cpp
     src/capture/CaptureDiagnostics.cpp
     src/scaling/ScalingEngine.cpp
+    src/scaling/ResolutionManager.cpp
     src/scaling/ScalingDiagnostics.cpp
     src/presenter/OutputPresenter.cpp
     src/monitor/PerfMonitor.cpp
