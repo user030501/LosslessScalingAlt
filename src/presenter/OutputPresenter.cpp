@@ -56,6 +56,13 @@ bool OutputPresenter::Initialize(ID3D11Device* device, ID3D11DeviceContext* cont
     }
 
     m_shadersReady = true;
+    for (auto& slot : m_timingSlots) {
+        D3D11_QUERY_DESC disjoint{D3D11_QUERY_TIMESTAMP_DISJOINT, 0};
+        D3D11_QUERY_DESC timestamp{D3D11_QUERY_TIMESTAMP, 0};
+        device->CreateQuery(&disjoint, slot.disjoint.GetAddressOf());
+        device->CreateQuery(&timestamp, slot.start.GetAddressOf());
+        device->CreateQuery(&timestamp, slot.end.GetAddressOf());
+    }
     return true;
 }
 
@@ -219,6 +226,28 @@ void OutputPresenter::ToggleFullscreen() {
 bool OutputPresenter::PresentFrame(ID3D11ShaderResourceView* srv, uint32_t srcWidth, uint32_t srcHeight) {
     if (!m_hwnd || !m_swapChain || !m_rtv) return false;
 
+    LARGE_INTEGER cpuStart{}, cpuEnd{}, cpuFreq{};
+    QueryPerformanceFrequency(&cpuFreq);
+    QueryPerformanceCounter(&cpuStart);
+
+    PresenterTimingSlot& readSlot = m_timingSlots[m_timingReadIndex];
+    if (readSlot.pending) {
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint{};
+        if (m_context->GetData(readSlot.disjoint.Get(), &disjoint, sizeof(disjoint), 0) == S_OK) {
+            UINT64 start = 0, end = 0;
+            if (!disjoint.Disjoint && disjoint.Frequency > 0 &&
+                m_context->GetData(readSlot.start.Get(), &start, sizeof(start), 0) == S_OK &&
+                m_context->GetData(readSlot.end.Get(), &end, sizeof(end), 0) == S_OK) {
+                m_lastGpuMs = static_cast<double>(end - start) * 1000.0 /
+                              static_cast<double>(disjoint.Frequency);
+            } else {
+                m_lastGpuMs = -1.0;
+            }
+            readSlot.pending = false;
+            m_timingReadIndex = (m_timingReadIndex + 1) % static_cast<int>(m_timingSlots.size());
+        }
+    }
+
     LARGE_INTEGER now{}, freq{};
     QueryPerformanceCounter(&now);
     QueryPerformanceFrequency(&freq);
@@ -239,6 +268,11 @@ bool OutputPresenter::PresentFrame(ID3D11ShaderResourceView* srv, uint32_t srcWi
     const float clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
     m_context->OMSetRenderTargets(1, m_rtv.GetAddressOf(), nullptr);
     m_context->ClearRenderTargetView(m_rtv.Get(), clearColor);
+    PresenterTimingSlot& writeSlot = m_timingSlots[m_timingWriteIndex];
+    if (!writeSlot.pending) {
+        m_context->Begin(writeSlot.disjoint.Get());
+        m_context->End(writeSlot.start.Get());
+    }
 
     if (srv && srcWidth > 0 && srcHeight > 0) {
         m_context->RSSetViewports(1, &m_viewport);
@@ -258,7 +292,19 @@ bool OutputPresenter::PresentFrame(ID3D11ShaderResourceView* srv, uint32_t srcWi
         m_context->PSSetShaderResources(0, 1, nullSrv);
     }
 
+    if (!writeSlot.pending) {
+        m_context->End(writeSlot.end.Get());
+        m_context->End(writeSlot.disjoint.Get());
+        writeSlot.pending = true;
+        m_timingWriteIndex = (m_timingWriteIndex + 1) % static_cast<int>(m_timingSlots.size());
+    }
+
     const HRESULT hr = m_swapChain->Present(1, 0);
+    QueryPerformanceCounter(&cpuEnd);
+    if (cpuFreq.QuadPart > 0) {
+        m_lastCpuSubmissionMs = static_cast<double>(cpuEnd.QuadPart - cpuStart.QuadPart) * 1000.0 /
+                                static_cast<double>(cpuFreq.QuadPart);
+    }
     return SUCCEEDED(hr);
 }
 

@@ -247,6 +247,26 @@ void DrawMonitorPanel(AppState& state) {
             ImGui::Text("GPU Device: %s",
                         state.gpu.Device() && state.gpu.Device()->GetDeviceRemovedReason() == S_OK
                             ? "Healthy" : "Removed/Unavailable");
+            if (state.scalingEngine->GpuTimingAvailable() && state.scalingEngine->LastGpuExecutionMs() >= 0.0) {
+                ImGui::Text("Scaling GPU Execution: %.3f ms (measured)", state.scalingEngine->LastGpuExecutionMs());
+            } else {
+                ImGui::TextDisabled("Scaling GPU Execution: N/A");
+            }
+            ImGui::Text("Scaling CPU Submission: %.3f ms", state.scalingEngine->LastCpuSubmissionMs());
+            ImGui::Text("Texture Pool Reuses: %llu", static_cast<unsigned long long>(state.scalingEngine->PoolReuseCount()));
+            ImGui::Text("Resource Trims: %llu",
+                        static_cast<unsigned long long>(state.scalingEngine->ResourceTrimCount()));
+            ImGui::Text("Allocation Failures: %llu",
+                        static_cast<unsigned long long>(state.scalingEngine->AllocationFailureCount()));
+        }
+        ImGui::Text("Device Recovery Events: %llu",
+                    static_cast<unsigned long long>(state.deviceRecoveryCount));
+        if (state.presenter && state.presenter->IsOpen()) {
+            if (state.presenter->LastGpuExecutionMs() >= 0.0)
+                ImGui::Text("Presenter GPU Execution: %.3f ms (measured)", state.presenter->LastGpuExecutionMs());
+            else
+                ImGui::TextDisabled("Presenter GPU Execution: N/A");
+            ImGui::Text("Presenter CPU Submission: %.3f ms", state.presenter->LastCpuSubmissionMs());
         }
 
         if (!fgStats.autoAdjustReason.empty()) {
@@ -315,6 +335,55 @@ void DrawMonitorPanel(AppState& state) {
         if (ImGui::Button("Clear History")) {
             state.perfHistory.ClearHistory();
         }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "Synthetic Benchmark History");
+    const auto& benchmarks = state.benchmarkHistory.Results();
+    if (!benchmarks.empty()) {
+        if (ImGui::BeginTable("benchmark_history", 8,
+                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+                               ImVec2(0, 160))) {
+            ImGui::TableSetupColumn("GPU");
+            ImGui::TableSetupColumn("Size");
+            ImGui::TableSetupColumn("Algorithm");
+            ImGui::TableSetupColumn("Average");
+            ImGui::TableSetupColumn("Median");
+            ImGui::TableSetupColumn("Min");
+            ImGui::TableSetupColumn("Max");
+            ImGui::TableSetupColumn("StdDev");
+            ImGui::TableHeadersRow();
+            for (auto it = benchmarks.rbegin(); it != benchmarks.rend(); ++it) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(it->gpuName.c_str());
+                ImGui::TableSetColumnIndex(1); ImGui::Text("%ux%u", it->width, it->height);
+                ImGui::TableSetColumnIndex(2); ImGui::TextUnformatted(it->scalingAlgorithm.c_str());
+                ImGui::TableSetColumnIndex(3); ImGui::Text("%.3f ms", it->averageMs);
+                ImGui::TableSetColumnIndex(4); ImGui::Text("%.3f ms", it->medianMs);
+                ImGui::TableSetColumnIndex(5); ImGui::Text("%.3f ms", it->minimumMs);
+                ImGui::TableSetColumnIndex(6); ImGui::Text("%.3f ms", it->maximumMs);
+                ImGui::TableSetColumnIndex(7); ImGui::Text("%.3f ms", it->standardDeviationMs);
+            }
+            ImGui::EndTable();
+        }
+    } else {
+        ImGui::TextDisabled("No synthetic benchmark sessions recorded.");
+    }
+    if (ImGui::Button("Export Benchmark CSV...")) {
+        wchar_t fileBuf[MAX_PATH] = L"lsalt_benchmark_history.csv";
+        OPENFILENAMEW ofn{};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.lpstrFilter = L"CSV Files (*.csv)\0*.csv\0All Files\0*.*\0";
+        ofn.lpstrFile = fileBuf;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrDefExt = L"csv";
+        ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+        if (GetSaveFileNameW(&ofn)) state.benchmarkHistory.ExportCsv(fileBuf);
+    }
+    ImGui::SameLine();
+    if (!benchmarks.empty() && ImGui::Button("Clear Benchmark History")) {
+        state.benchmarkHistory.Clear();
     }
 }
 

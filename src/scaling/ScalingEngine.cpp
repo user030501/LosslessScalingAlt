@@ -62,6 +62,15 @@ bool ScalingEngineD3D11::Initialize(ID3D11Device* device, const std::wstring& sh
     }
 
     m_cb = CreateConstantBuffer(device, sizeof(ScalingCB));
+    for (auto& slot : m_timingSlots) {
+        D3D11_QUERY_DESC disjoint{D3D11_QUERY_TIMESTAMP_DISJOINT, 0};
+        D3D11_QUERY_DESC timestamp{D3D11_QUERY_TIMESTAMP, 0};
+        if (SUCCEEDED(device->CreateQuery(&disjoint, slot.disjoint.GetAddressOf())) &&
+            SUCCEEDED(device->CreateQuery(&timestamp, slot.start.GetAddressOf())) &&
+            SUCCEEDED(device->CreateQuery(&timestamp, slot.end.GetAddressOf()))) {
+            m_gpuTimingAvailable = true;
+        }
+    }
 
     D3D11_SAMPLER_DESC sampDesc{};
     sampDesc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
@@ -231,8 +240,47 @@ uint64_t ScalingEngineD3D11::EstimatedOutputTextureBytes() const {
     return static_cast<uint64_t>(m_dstWidth) * m_dstHeight * 4;
 }
 
+void ScalingEngineD3D11::ApplyVramPressure() {
+    if (!m_vramQuery) return;
+    uint64_t used = 0, budget = 0;
+    if (!m_vramQuery(used, budget) || budget == 0) return;
+    const uint64_t threshold = static_cast<uint64_t>(budget * 0.85);
+    if (used < threshold) return;
+    const uint64_t poolBefore = m_texturePool.EstimatedBytesInPool();
+    if (poolBefore > 0) {
+        m_texturePool.TrimToBytes(poolBefore / 2);
+        ++m_resourceTrimCount;
+        Logger::Instance().Warn("ScalingEngine",
+            "VRAM pressure detected; trimmed half of pooled scaling textures.");
+    }
+}
+
 ID3D11ShaderResourceView* ScalingEngineD3D11::Scale(ID3D11DeviceContext* context, ID3D11ShaderResourceView* srcSRV) {
     if (!m_valid || !srcSRV) return nullptr;
+
+    LARGE_INTEGER cpuStart{}, cpuEnd{}, cpuFreq{};
+    QueryPerformanceFrequency(&cpuFreq);
+    QueryPerformanceCounter(&cpuStart);
+
+    {
+        ScalingTimingSlot& readSlot = m_timingSlots[m_timingReadIndex];
+        if (readSlot.pending) {
+            D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint{};
+            if (context->GetData(readSlot.disjoint.Get(), &disjoint, sizeof(disjoint), 0) == S_OK) {
+                UINT64 start = 0, end = 0;
+                if (!disjoint.Disjoint && disjoint.Frequency > 0 &&
+                    context->GetData(readSlot.start.Get(), &start, sizeof(start), 0) == S_OK &&
+                    context->GetData(readSlot.end.Get(), &end, sizeof(end), 0) == S_OK) {
+                    m_lastGpuMs = static_cast<double>(end - start) * 1000.0 /
+                                  static_cast<double>(disjoint.Frequency);
+                } else {
+                    m_lastGpuMs = -1.0;
+                }
+                readSlot.pending = false;
+                m_timingReadIndex = (m_timingReadIndex + 1) % static_cast<int>(m_timingSlots.size());
+            }
+        }
+    }
 
     ScalingCB cb{};
     cb.dstSize[0] = m_dstWidth;
@@ -272,12 +320,34 @@ ID3D11ShaderResourceView* ScalingEngineD3D11::Scale(ID3D11DeviceContext* context
     context->CSSetSamplers(0, 1, m_linearClampSampler.GetAddressOf());
     ID3D11UnorderedAccessView* uavs[1] = {m_outputUav.Get()};
     context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+    ScalingTimingSlot* writeSlot = nullptr;
+    if (m_gpuTimingAvailable) {
+        writeSlot = &m_timingSlots[m_timingWriteIndex];
+        if (!writeSlot->pending) {
+            context->Begin(writeSlot->disjoint.Get());
+            context->End(writeSlot->start.Get());
+        } else {
+            writeSlot = nullptr;
+        }
+    }
     context->Dispatch(DivRoundUp(m_dstWidth, 8), DivRoundUp(m_dstHeight, 8), 1);
+    if (writeSlot) {
+        context->End(writeSlot->end.Get());
+        context->End(writeSlot->disjoint.Get());
+        writeSlot->pending = true;
+        m_timingWriteIndex = (m_timingWriteIndex + 1) % static_cast<int>(m_timingSlots.size());
+    }
 
     ID3D11UnorderedAccessView* nullUav[1] = {nullptr};
     context->CSSetUnorderedAccessViews(0, 1, nullUav, nullptr);
     ID3D11ShaderResourceView* nullSrv[1] = {nullptr};
     context->CSSetShaderResources(0, 1, nullSrv);
+
+    QueryPerformanceCounter(&cpuEnd);
+    if (cpuFreq.QuadPart > 0) {
+        m_lastCpuSubmissionMs = static_cast<double>(cpuEnd.QuadPart - cpuStart.QuadPart) * 1000.0 /
+                                static_cast<double>(cpuFreq.QuadPart);
+    }
 
     return m_outputSrv.Get();
 }

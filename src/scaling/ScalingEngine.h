@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <array>
 #include "../core/Types.h"
 #include "../gpu/TexturePool.h"
 
@@ -102,6 +103,12 @@ public:
     uint64_t EstimatedPoolBytes() const { return m_texturePool.EstimatedBytesInPool(); }
     uint64_t PoolReuseCount() const { return m_texturePool.TotalReusesEver(); }
     uint64_t PoolAllocationCount() const { return m_texturePool.TotalAllocationsEver(); }
+    double LastGpuExecutionMs() const { return m_lastGpuMs; }
+    double LastCpuSubmissionMs() const { return m_lastCpuSubmissionMs; }
+    bool GpuTimingAvailable() const { return m_gpuTimingAvailable; }
+    uint64_t ResourceTrimCount() const { return m_resourceTrimCount; }
+    uint64_t AllocationFailureCount() const { return m_texturePool.TotalAllocationFailuresEver(); }
+    void ApplyVramPressure();
     const std::string& LastClampReason() const { return m_lastClampReason; }
 
     // The real D3D11 hardware limit for a single texture dimension at
@@ -136,6 +143,19 @@ private:
 
     std::function<bool(uint64_t&, uint64_t&)> m_vramQuery;
     std::string m_lastClampReason;
+    struct ScalingTimingSlot {
+        Microsoft::WRL::ComPtr<ID3D11Query> disjoint;
+        Microsoft::WRL::ComPtr<ID3D11Query> start;
+        Microsoft::WRL::ComPtr<ID3D11Query> end;
+        bool pending = false;
+    };
+    std::array<ScalingTimingSlot, 4> m_timingSlots;
+    int m_timingWriteIndex = 0;
+    int m_timingReadIndex = 0;
+    double m_lastGpuMs = -1.0;
+    double m_lastCpuSubmissionMs = -1.0;
+    bool m_gpuTimingAvailable = false;
+    uint64_t m_resourceTrimCount = 0;
 };
 
 } // namespace lsalt

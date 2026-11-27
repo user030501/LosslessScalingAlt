@@ -3,6 +3,20 @@
 All notable changes to this project are documented here. Versions are
 development milestones, not public releases.
 
+## [0.10.0] - GPU benchmarking, runtime reliability, profile integration
+
+### Added
+- Persistent benchmark history with GPU/configuration metadata and CSV export.
+- D3D11 timestamp-query rings for Scaling and Presenter GPU execution;
+  CPU submission and processing remain separately identified.
+- Runtime VRAM-pressure pool trimming hooks and allocation-failure counters.
+- Profile schema-v2 adaptive scaling fields: enablement, preferred/minimum/
+  maximum quality, preferred sharpening/algorithm, and cooldown.
+- Dashboard benchmark history, GPU execution, pool reuse/trimming,
+  allocation-failure, and device-recovery counters.
+- Phase 10 stability tests for timestamp completion, benchmark persistence,
+  CSV export, pressure trimming, migration, and manual restoration.
+
 ## [0.9.0] - Advanced GPU optimization and adaptive performance
 
 ### Added

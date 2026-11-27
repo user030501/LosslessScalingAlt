@@ -176,6 +176,7 @@ bool App::Initialize(HINSTANCE hInstance) {
 
 void App::RenderFrame() {
     m_state.lastStats = m_state.perf->Sample();
+    if (m_state.scalingEngine) m_state.scalingEngine->ApplyVramPressure();
 
     if (m_state.thermalMonitor) {
         m_state.lastThermalSample = m_state.thermalMonitor->Sample(
@@ -196,6 +197,16 @@ void App::RenderFrame() {
         m_state.lastGameScan = m_state.gameDetector.Scan();
         m_state.gameSession.Update(m_state.lastGameScan, m_state.profiles, m_state.frameGenEngine.get(),
                                      m_state.selectedProfileIndex, m_state.statusMessage, m_state.frameGenLiveEnabled);
+        if (GameProfile* adaptiveProfile = m_state.profiles.AtIndex(m_state.selectedProfileIndex)) {
+            if (m_state.scalingEngine) {
+                m_state.scalingEngine->SetAlgorithm(adaptiveProfile->preferredScalingAlgorithm);
+                m_state.scalingEngine->SetQualityPreset(adaptiveProfile->preferredScalingQuality);
+                m_state.scalingEngine->SetSharpenLevel(adaptiveProfile->preferredSharpenLevel);
+            }
+            if (m_state.dynamicPerfManager) {
+                m_state.dynamicPerfManager->SetAdaptiveScalingEnabled(adaptiveProfile->adaptiveScalingEnabled);
+            }
+        }
     }
 
     // Real capture (when active) takes over the Scaling/Frame Generation
@@ -508,6 +519,7 @@ bool App::AttemptDeviceLossRecovery() {
     // just-recreated device.
     m_state.frameGenLiveEnabled = false;
     m_state.scalingLiveEnabled = false;
+    ++m_state.deviceRecoveryCount;
     if (m_state.frameGenEngine) m_state.frameGenEngine->SetEnabled(false);
 
     Logger::Instance().Info("App", "Device-loss recovery succeeded: GPU device, swap chain, UI renderer and "

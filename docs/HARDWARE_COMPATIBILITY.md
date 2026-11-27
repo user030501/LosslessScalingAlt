@@ -18,7 +18,7 @@ benchmark run on different hardware.
 ## What was actually verified, and how
 
 All results below come from the automated self-test suite
-(`LSAlt.exe --selftest`), which is 52/52 passing as of this writing (Debug
+(`LSAlt.exe --selftest`), which is 58/58 passing as of this writing (Debug
 and Release), run against the NVIDIA GeForce MX150 (auto-selected by
 the capability-scored adapter selection over the Intel UHD 620).
 
@@ -150,3 +150,12 @@ rounds, but wall-clock dispatch-plus-flush timing is not a GPU-only execution
 measurement. The 900p result may vary relative to 720p because of driver
 warm-up and scheduling; no individual ordering is interpreted as an
 optimization claim.
+
+## Phase 10 verification scope
+
+Phase 10 validates persistent benchmark serialization/CSV, D3D11 scaling
+timestamp query availability/completion, runtime pool trimming hooks,
+oversized allocation handling, profile migration, and adaptive restore.
+GPU execution is only shown when completed disjoint-safe timestamp queries
+are available. Synthetic benchmark rows are not real-game compatibility or
+performance claims.

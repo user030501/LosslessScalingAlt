@@ -59,6 +59,11 @@ what was verified on real hardware versus what's a known limitation.
 - **Phase 9 GPU optimization**: bounded texture-pool trimming, estimated
   owned texture memory, DXGI pressure reporting where available, and
   opt-in adaptive scaling quality with cooldown and hysteresis.
+- **Phase 10 benchmark/runtime reliability**: persistent benchmark history,
+  CSV export, D3D11 timestamp-query scaling/presenter timing, runtime pool
+  trimming hooks, allocation-failure tracking, profile adaptive scaling,
+  and schema-v2 backward-compatible migration. Real-game capture remains
+  outside the synthetic validation scope.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the module map and
 real data-flow diagrams, and [`docs/BUILD.md`](docs/BUILD.md) /

@@ -118,6 +118,16 @@ void DrawScalingPanel(AppState& state) {
         profile.preserveAspectRatio = profile.aspectMode != AspectMode::Stretch;
     }
 
+    ImGui::Checkbox("Adaptive Scaling Enabled", &profile.adaptiveScalingEnabled);
+    int cooldown = profile.adaptiveScalingCooldownSeconds;
+    if (ImGui::SliderInt("Adaptive Cooldown (seconds)", &cooldown, 5, 300)) {
+        profile.adaptiveScalingCooldownSeconds = cooldown;
+    }
+    int preferredQuality = static_cast<int>(profile.preferredScalingQuality);
+    if (ImGui::Combo("Preferred Scaling Quality", &preferredQuality, qualityNames, IM_ARRAYSIZE(qualityNames))) {
+        profile.preferredScalingQuality = static_cast<ScalingQualityPreset>(preferredQuality);
+    }
+
     ImGui::Spacing();
     ImGui::Text("Window Mode");
     const char* modeNames[] = {"Fullscreen", "Borderless Window", "Windowed"};

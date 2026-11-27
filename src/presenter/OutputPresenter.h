@@ -7,6 +7,7 @@
 #include <string>
 #include "../core/Types.h"
 #include "../framegen/FrameScheduler.h"
+#include <array>
 
 namespace lsalt {
 
@@ -44,6 +45,8 @@ public:
     bool IsFullscreen() const { return m_fullscreen; }
     void SetRefreshRate(double refreshHz) { m_frameScheduler.SetRefreshRate(refreshHz); }
     const FrameScheduler& FrameSchedulerStats() const { return m_frameScheduler; }
+    double LastGpuExecutionMs() const { return m_lastGpuMs; }
+    double LastCpuSubmissionMs() const { return m_lastCpuSubmissionMs; }
 
     // Call once per App::RenderFrame tick with the latest pipeline output
     // to show. srv may be null (nothing new yet -- the backbuffer is
@@ -86,6 +89,17 @@ private:
     D3D11_VIEWPORT m_viewport{};
     FrameScheduler m_frameScheduler;
     uint64_t m_presentSequence = 0;
+    struct PresenterTimingSlot {
+        Microsoft::WRL::ComPtr<ID3D11Query> disjoint;
+        Microsoft::WRL::ComPtr<ID3D11Query> start;
+        Microsoft::WRL::ComPtr<ID3D11Query> end;
+        bool pending = false;
+    };
+    std::array<PresenterTimingSlot, 4> m_timingSlots;
+    int m_timingWriteIndex = 0;
+    int m_timingReadIndex = 0;
+    double m_lastGpuMs = -1.0;
+    double m_lastCpuSubmissionMs = -1.0;
 };
 
 } // namespace lsalt

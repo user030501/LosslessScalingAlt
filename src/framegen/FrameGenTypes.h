@@ -68,6 +68,11 @@ struct FrameGenStats {
     double cpuProcessingMs = 0.0;
     uint64_t estimatedOwnedTextureBytes = 0;
     double gpuMemoryPressurePercent = 0.0;
+    double scalingGpuMs = -1.0;
+    double scalingCpuSubmissionMs = -1.0;
+    double sharpeningGpuMs = -1.0;
+    double presenterGpuMs = -1.0;
+    double presenterCpuSubmissionMs = -1.0;
 
     // Phase 4: running avg/min/max of displayedFps since the engine was
     // last (re)enabled -- real incremental statistics over the same real

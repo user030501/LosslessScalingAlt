@@ -24,6 +24,7 @@
 #include "profiles/GameDetector.h"
 #include "profiles/GameSessionController.h"
 #include "profiles/PerformanceHistory.h"
+#include "profiles/BenchmarkHistory.h"
 #include "profiles/ProfileDiagnostics.h"
 
 namespace lsalt {
@@ -96,7 +97,9 @@ struct AppState {
     GameDetector gameDetector;
     GameSessionController gameSession;
     PerformanceHistory perfHistory;
+    BenchmarkHistory benchmarkHistory;
     std::vector<DetectedProcess> lastGameScan;
+    uint64_t deviceRecoveryCount = 0;
 };
 
 // Owns the Win32 window, D3D11 swapchain and the ImGui frame lifecycle.

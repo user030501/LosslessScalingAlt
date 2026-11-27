@@ -44,6 +44,7 @@ public:
     uint64_t TotalAllocationsEver() const { return m_totalAllocations; }
     uint64_t TotalReusesEver() const { return m_totalReuses; }
     size_t PooledCount() const { return m_pooled.size(); }
+    uint64_t TotalAllocationFailuresEver() const { return m_totalAllocationFailures; }
 
 private:
     struct Entry {
@@ -59,6 +60,7 @@ private:
     size_t m_capacity;
     uint64_t m_totalAllocations = 0;
     uint64_t m_totalReuses = 0;
+    uint64_t m_totalAllocationFailures = 0;
 };
 
 } // namespace lsalt

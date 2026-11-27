@@ -50,6 +50,7 @@ bool TexturePool::Acquire(ID3D11Device* device, uint32_t width, uint32_t height,
 
     Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
     if (FAILED(device->CreateTexture2D(&desc, nullptr, tex.GetAddressOf()))) {
+        ++m_totalAllocationFailures;
         Logger::Instance().Error("TexturePool", "CreateTexture2D failed (out of memory, or an invalid/too-large "
                                                    "request -- see the caller's own resolution clamping).");
         return false;

@@ -31,6 +31,7 @@ add_executable(LSAlt WIN32
     src/profiles/GameDetector.cpp
     src/profiles/GameSessionController.cpp
     src/profiles/PerformanceHistory.cpp
+    src/profiles/BenchmarkHistory.cpp
     src/profiles/ProfileDiagnostics.cpp
     src/framegen/ShaderCompiler.cpp
     src/framegen/MotionEstimator.cpp

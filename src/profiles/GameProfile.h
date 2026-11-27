@@ -60,6 +60,13 @@ struct GameProfile {
     ScalingQualityPreset scalingQuality = ScalingQualityPreset::Balanced;
     SharpenLevel sharpenLevel = SharpenLevel::Off;
     AspectMode aspectMode = AspectMode::Fit;
+    bool adaptiveScalingEnabled = false;
+    ScalingQualityPreset preferredScalingQuality = ScalingQualityPreset::Balanced;
+    ScalingQualityPreset minimumScalingQuality = ScalingQualityPreset::Performance;
+    ScalingQualityPreset maximumScalingQuality = ScalingQualityPreset::Quality;
+    SharpenLevel preferredSharpenLevel = SharpenLevel::Off;
+    ScalingAlgorithm preferredScalingAlgorithm = ScalingAlgorithm::Bilinear;
+    int adaptiveScalingCooldownSeconds = 30;
 
     // Bumped whenever a profile-file schema change needs old files to be
     // migrated (see ProfileManager::MigrateIfNeeded). 0 means "written
@@ -69,7 +76,7 @@ struct GameProfile {
     // "just default a missing field" (recorded explicitly, logged, and
     // the file re-saved, rather than silently re-defaulting every load).
     int profileSchemaVersion = 0;
-    static constexpr int kCurrentSchemaVersion = 1;
+    static constexpr int kCurrentSchemaVersion = 2;
 };
 
 void to_json(nlohmann::json& j, const GameProfile& p);

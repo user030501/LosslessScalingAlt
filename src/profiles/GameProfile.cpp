@@ -1,4 +1,5 @@
 #include "GameProfile.h"
+#include <algorithm>
 
 namespace lsalt {
 
@@ -31,6 +32,13 @@ void to_json(nlohmann::json& j, const GameProfile& p) {
         {"scalingQuality", static_cast<int>(p.scalingQuality)},
         {"sharpenLevel", static_cast<int>(p.sharpenLevel)},
         {"aspectMode", static_cast<int>(p.aspectMode)},
+        {"adaptiveScalingEnabled", p.adaptiveScalingEnabled},
+        {"preferredScalingQuality", static_cast<int>(p.preferredScalingQuality)},
+        {"minimumScalingQuality", static_cast<int>(p.minimumScalingQuality)},
+        {"maximumScalingQuality", static_cast<int>(p.maximumScalingQuality)},
+        {"preferredSharpenLevel", static_cast<int>(p.preferredSharpenLevel)},
+        {"preferredScalingAlgorithm", static_cast<int>(p.preferredScalingAlgorithm)},
+        {"adaptiveScalingCooldownSeconds", p.adaptiveScalingCooldownSeconds},
         {"profileSchemaVersion", p.profileSchemaVersion},
     };
 }
@@ -73,6 +81,14 @@ void from_json(const nlohmann::json& j, GameProfile& p) {
     p.sharpenLevel = static_cast<SharpenLevel>(j.value("sharpenLevel", 0));
     p.aspectMode = static_cast<AspectMode>(j.value("aspectMode", 1));
     p.profileSchemaVersion = j.value("profileSchemaVersion", 0);
+    p.adaptiveScalingEnabled = j.value("adaptiveScalingEnabled", false);
+    p.preferredScalingQuality = static_cast<ScalingQualityPreset>(j.value("preferredScalingQuality", static_cast<int>(p.scalingQuality)));
+    p.minimumScalingQuality = static_cast<ScalingQualityPreset>(j.value("minimumScalingQuality", 0));
+    p.maximumScalingQuality = static_cast<ScalingQualityPreset>(j.value("maximumScalingQuality", 2));
+    p.preferredSharpenLevel = static_cast<SharpenLevel>(j.value("preferredSharpenLevel", static_cast<int>(p.sharpenLevel)));
+    p.preferredScalingAlgorithm = static_cast<ScalingAlgorithm>(j.value("preferredScalingAlgorithm", static_cast<int>(p.scalingAlgorithm)));
+    p.adaptiveScalingCooldownSeconds = j.value("adaptiveScalingCooldownSeconds", 30);
+    p.adaptiveScalingCooldownSeconds = std::max(5, std::min(p.adaptiveScalingCooldownSeconds, 300));
 }
 
 std::vector<GameProfile> BuiltInSampleProfiles() {

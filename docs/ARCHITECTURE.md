@@ -131,3 +131,23 @@ and expensive algorithms down under sustained measured overload. Changes
 use hysteresis and cooldown, are surfaced in the UI, and restore gradually.
 Disabling adaptive scaling restores the original scaling settings. Desktop
 resolution is never changed by adaptive logic.
+
+## Phase 10 benchmark and reliability
+
+`BenchmarkHistory` persists configuration-tagged synthetic benchmark
+sessions and exports CSV. It does not combine GPU or configuration classes
+implicitly.
+
+Scaling and Presenter use bounded D3D11 timestamp-query rings. Results are
+pollable asynchronously and require a completed, non-disjoint timestamp
+range. CPU submission timing comes from QPC; it is not reported as GPU
+execution.
+
+Runtime VRAM pressure invokes pool trimming only after DXGI usage reaches
+the conservative 85% budget threshold. Trimming is bounded and never
+destroys the current acquired scaling texture. Allocation failures,
+trimming events, and device-recovery counts are exposed as diagnostics.
+
+Game profiles add schema-v2 adaptive-scaling preferences. Legacy profile
+files default adaptive scaling off and explicitly preserve their existing
+scaling algorithm, sharpening, and quality as preferred settings.

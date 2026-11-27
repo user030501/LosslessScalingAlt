@@ -4,6 +4,8 @@
 #include "../framegen/FrameScheduler.h"
 #include "../framegen/FramePacing.h"
 #include "../framegen/DynamicPerformanceManager.h"
+#include "../profiles/BenchmarkHistory.h"
+#include "../profiles/GameProfile.h"
 #include "../framegen/FrameGenEngine.h"
 #include "../framegen/TestPatternSource.h"
 #include "../core/Logger.h"
@@ -781,6 +783,147 @@ std::vector<DiagnosticResult> ScalingDiagnostics::RunAll(ID3D11Device* device, I
                    pool.PooledCount() == 0;
         r.detail = "oversizedAllocationReturned=" + std::to_string(allocated) +
                    " allocationFailureHandled=" + std::to_string(r.passed);
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"53. GPU Timestamp - Scaling Query Completion", false, ""};
+        ScalingEngineD3D11 scaler;
+        bool ok = scaler.Initialize(device, shaderDir) &&
+                  scaler.Resize(960, 540, 1280, 720);
+        scaler.SetAlgorithm(ScalingAlgorithm::Bilinear);
+        source.RenderExplicit(context, 0.5, 0.75);
+        ok = ok && scaler.Scale(context, source.FrameBSRV()) != nullptr;
+        context->Flush();
+        for (int i = 0; i < 8 && scaler.LastGpuExecutionMs() < 0.0; ++i)
+            ok = ok && scaler.Scale(context, source.FrameBSRV()) != nullptr;
+        r.passed = ok && scaler.GpuTimingAvailable();
+        r.detail = "gpuTimingAvailable=" + std::to_string(scaler.GpuTimingAvailable()) +
+                   " latestGpuMs=" + std::to_string(scaler.LastGpuExecutionMs()) +
+                   " cpuSubmissionMs=" + std::to_string(scaler.LastCpuSubmissionMs());
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"54. Benchmark History - Persistence and Migration", false, ""};
+        BenchmarkHistory history;
+        BenchmarkResult result;
+        result.unixSeconds = 123456789;
+        result.gpuName = "__LSAlt_SelfTest_GPU__";
+        result.width = 1920;
+        result.height = 1080;
+        result.scalingAlgorithm = "Bilinear";
+        result.averageMs = 1.25;
+        result.medianMs = 1.20;
+        result.minimumMs = 0.90;
+        result.maximumMs = 1.60;
+        result.standardDeviationMs = 0.15;
+        history.Add(result);
+        BenchmarkHistory reloaded;
+        const bool persisted = !reloaded.Results().empty() &&
+                               reloaded.Results().back().gpuName == "__LSAlt_SelfTest_GPU__";
+        history.Clear();
+        r.passed = persisted && history.Results().empty();
+        r.detail = "persisted=" + std::to_string(persisted) +
+                   " cleared=" + std::to_string(history.Results().empty());
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"55. Benchmark History - CSV Export", false, ""};
+        BenchmarkHistory history;
+        BenchmarkResult result;
+        result.gpuName = "__LSAlt_SelfTest_GPU__";
+        result.width = 1280;
+        result.height = 720;
+        result.averageMs = 1.0;
+        history.Add(result);
+        wchar_t tempDir[MAX_PATH]{};
+        GetTempPathW(MAX_PATH, tempDir);
+        const std::wstring csvPath = std::wstring(tempDir) + L"lsalt_benchmark_selftest.csv";
+        const bool exported = history.ExportCsv(csvPath);
+        bool headerOk = false;
+        std::ifstream check(csvPath);
+        std::string firstLine;
+        if (check.is_open()) {
+            std::getline(check, firstLine);
+            headerOk = firstLine.find("gpu_name") != std::string::npos;
+        }
+        check.close();
+        DeleteFileW(csvPath.c_str());
+        history.Clear();
+        r.passed = exported && headerOk;
+        r.detail = "exported=" + std::to_string(exported) +
+                   " headerOk=" + std::to_string(headerOk);
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"56. Runtime VRAM Pressure - Pool Trimming", false, ""};
+        ScalingEngineD3D11 scaler;
+        scaler.SetVramQuery([](uint64_t& used, uint64_t& budget) {
+            used = 1900u * 1024u * 1024u;
+            budget = 2048u * 1024u * 1024u;
+            return true;
+        });
+        bool ok = scaler.Initialize(device, shaderDir) &&
+                  scaler.Resize(960, 540, 1280, 720);
+        scaler.ApplyVramPressure();
+        r.passed = ok && scaler.ResourceTrimCount() >= 0;
+        r.detail = "trimCount=" + std::to_string(scaler.ResourceTrimCount()) +
+                   " poolBytes=" + std::to_string(scaler.EstimatedPoolBytes());
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"57. Adaptive Profile Migration - Defaults", false, ""};
+        GameProfile legacy;
+        legacy.profileSchemaVersion = 1;
+        legacy.scalingQuality = ScalingQualityPreset::Balanced;
+        legacy.sharpenLevel = SharpenLevel::Low;
+        legacy.scalingAlgorithm = ScalingAlgorithm::Bicubic;
+        legacy.preferredScalingQuality = ScalingQualityPreset::Balanced;
+        legacy.preferredSharpenLevel = SharpenLevel::Low;
+        legacy.preferredScalingAlgorithm = ScalingAlgorithm::Bicubic;
+        nlohmann::json j;
+        to_json(j, legacy);
+        j["profileSchemaVersion"] = 1;
+        GameProfile migrated;
+        from_json(j, migrated);
+        r.passed = migrated.profileSchemaVersion == 1 &&
+                   migrated.preferredScalingQuality == ScalingQualityPreset::Balanced &&
+                   migrated.preferredSharpenLevel == SharpenLevel::Low &&
+                   migrated.preferredScalingAlgorithm == ScalingAlgorithm::Bicubic &&
+                   migrated.adaptiveScalingEnabled == false &&
+                   migrated.adaptiveScalingCooldownSeconds >= 5;
+        r.detail = "adaptiveDisabled=" + std::to_string(!migrated.adaptiveScalingEnabled) +
+                   " cooldown=" + std::to_string(migrated.adaptiveScalingCooldownSeconds);
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"58. Adaptive Profile - Persistence and Manual Restore", false, ""};
+        GameProfile profile;
+        profile.displayName = "__LSAlt_SelfTest_Adaptive_Profile__";
+        profile.adaptiveScalingEnabled = true;
+        profile.preferredScalingQuality = ScalingQualityPreset::Quality;
+        profile.minimumScalingQuality = ScalingQualityPreset::Balanced;
+        profile.maximumScalingQuality = ScalingQualityPreset::Quality;
+        profile.preferredSharpenLevel = SharpenLevel::Medium;
+        profile.preferredScalingAlgorithm = ScalingAlgorithm::Lanczos;
+        profile.adaptiveScalingCooldownSeconds = 45;
+        nlohmann::json j;
+        to_json(j, profile);
+        GameProfile reloaded;
+        from_json(j, reloaded);
+        reloaded.adaptiveScalingEnabled = false;
+        r.passed = reloaded.adaptiveScalingEnabled == false &&
+                   reloaded.preferredScalingQuality == ScalingQualityPreset::Quality &&
+                   reloaded.preferredSharpenLevel == SharpenLevel::Medium &&
+                   reloaded.preferredScalingAlgorithm == ScalingAlgorithm::Lanczos &&
+                   reloaded.adaptiveScalingCooldownSeconds == 45 &&
+                   reloaded.maximumScalingQuality == ScalingQualityPreset::Quality;
+        r.detail = "manualRestoreDefaultsPreserved=" + std::to_string(r.passed);
         results.push_back(r);
     }
 

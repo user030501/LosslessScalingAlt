@@ -123,6 +123,12 @@ bool ProfileManager::MigrateIfNeeded() {
     bool changed = false;
     for (GameProfile& p : m_profiles) {
         if (p.profileSchemaVersion < GameProfile::kCurrentSchemaVersion) {
+            p.preferredScalingQuality = p.scalingQuality;
+            p.preferredSharpenLevel = p.sharpenLevel;
+            p.preferredScalingAlgorithm = p.scalingAlgorithm;
+            p.minimumScalingQuality = ScalingQualityPreset::Performance;
+            p.maximumScalingQuality = ScalingQualityPreset::Quality;
+            p.adaptiveScalingCooldownSeconds = 30;
             p.profileSchemaVersion = GameProfile::kCurrentSchemaVersion;
             changed = true;
         }
