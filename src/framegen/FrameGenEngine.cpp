@@ -287,6 +287,11 @@ const std::deque<float>& FrameGenEngineD3D11::FrameTimeHistoryMs() const {
     return m_pacing ? m_pacing->FrameTimeHistoryMs() : kEmpty;
 }
 
+uint64_t FrameGenEngineD3D11::EstimatedOwnedTextureBytes() const {
+    if (m_width == 0 || m_height == 0) return 0;
+    return EstimateQualityModeBytes(m_width, m_height, FrameGenQualityParams::For(m_quality));
+}
+
 FrameGenStats FrameGenEngineD3D11::GetStats() const {
     FrameGenStats stats;
     stats.engineActive = IsEnabled();
@@ -302,6 +307,13 @@ FrameGenStats FrameGenEngineD3D11::GetStats() const {
         stats.statusText = "Running (2x)";
     }
     stats.autoAdjustReason = m_lastAutoAdjustReason;
+    stats.estimatedOwnedTextureBytes = EstimatedOwnedTextureBytes();
+    uint64_t used = 0, budget = 0;
+    if (m_vramQuery && m_vramQuery(used, budget) && budget > 0) {
+        stats.gpuMemoryPressurePercent =
+            static_cast<double>(used) / static_cast<double>(budget) * 100.0;
+        if (stats.gpuMemoryPressurePercent > 100.0) stats.gpuMemoryPressurePercent = 100.0;
+    }
     return stats;
 }
 

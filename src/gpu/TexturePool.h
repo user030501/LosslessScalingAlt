@@ -37,6 +37,8 @@ public:
     // Drops every pooled (not currently acquired) texture -- call on
     // device loss, or to reclaim memory under VRAM pressure.
     void Clear();
+    void SetCapacity(size_t capacity);
+    void TrimToBytes(uint64_t maxBytes);
 
     uint64_t EstimatedBytesInPool() const;
     uint64_t TotalAllocationsEver() const { return m_totalAllocations; }

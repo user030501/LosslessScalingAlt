@@ -18,7 +18,7 @@ benchmark run on different hardware.
 ## What was actually verified, and how
 
 All results below come from the automated self-test suite
-(`LSAlt.exe --selftest`), which is 45/45 passing as of this writing (Debug
+(`LSAlt.exe --selftest`), which is 52/52 passing as of this writing (Debug
 and Release), run against the NVIDIA GeForce MX150 (auto-selected by
 the capability-scored adapter selection over the Intel UHD 620).
 
@@ -140,3 +140,13 @@ late-frame, duplicate-frame, ordering, timing, GPU-timestamp, adaptive-
 quality, and synthetic 720p/900p/1080p/1440p workload coverage. These
 results measure the application and D3D11 pipeline on the development
 machine. They are not real-game FPS, frame-time, or compatibility claims.
+
+## Phase 9 GPU and benchmark verification
+
+Phase 9 adds real D3D11 pool reuse/cleanup, trimmed-pool, oversized-
+allocation, device-status, adaptive overload/cooldown/restore, and benchmark-
+repeatability scenarios. Benchmark output includes warm-up and repeated
+rounds, but wall-clock dispatch-plus-flush timing is not a GPU-only execution
+measurement. The 900p result may vary relative to 720p because of driver
+warm-up and scheduling; no individual ordering is interpreted as an
+optimization claim.

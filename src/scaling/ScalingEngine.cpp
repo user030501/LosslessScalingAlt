@@ -212,6 +212,21 @@ void ScalingEngineD3D11::SetAspectMode(AspectMode mode) {
 
 void ScalingEngineD3D11::SetSharpenLevel(SharpenLevel level) { m_sharpenLevel = level; }
 
+void ScalingEngineD3D11::SetQualityPreset(ScalingQualityPreset preset) {
+    m_qualityPreset = preset;
+    switch (preset) {
+        case ScalingQualityPreset::Performance:
+            m_sharpenLevel = SharpenLevel::Off;
+            break;
+        case ScalingQualityPreset::Balanced:
+            if (m_sharpenLevel == SharpenLevel::High) m_sharpenLevel = SharpenLevel::Medium;
+            break;
+        case ScalingQualityPreset::Quality:
+        default:
+            break;
+    }
+}
+
 uint64_t ScalingEngineD3D11::EstimatedOutputTextureBytes() const {
     return static_cast<uint64_t>(m_dstWidth) * m_dstHeight * 4;
 }

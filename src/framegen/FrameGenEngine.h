@@ -102,6 +102,7 @@ public:
     uint32_t OcclusionMaskHeight() const;
     double DetectedRefreshHz() const;
     const std::deque<float>& FrameTimeHistoryMs() const;
+    uint64_t EstimatedOwnedTextureBytes() const;
 
 private:
     bool DetectCapabilities(ID3D11Device* device);

@@ -3,6 +3,29 @@
 All notable changes to this project are documented here. Versions are
 development milestones, not public releases.
 
+## [0.9.0] - Advanced GPU optimization and adaptive performance
+
+### Added
+- Bounded texture-pool capacity and byte-budget trimming.
+- Pool allocation, reuse, cleanup, and oversized-allocation diagnostics.
+- Estimated FrameGen and Scaling texture-memory reporting in the
+  Performance Monitor.
+- Real DXGI GPU-memory-pressure reporting where `IDXGIAdapter3` is available.
+- Opt-in adaptive Scaling quality: algorithm, preset, and sharpening
+  step-down, sustained-headroom restoration, cooldown, hysteresis, and
+  opt-out restoration of the original settings.
+- Benchmark audit mode with warm-up, 30 measured rounds, median, average,
+  minimum, maximum, and standard deviation. Benchmarks report
+  submission-plus-`Flush` wall time, not actual GPU execution alone.
+- Phase 9 tests for pool cleanup, pool trimming, device status, oversized
+  allocation failure, adaptive overload/cooldown/restore, and repeatability.
+
+### Audited
+- Phase 8 900p measurements can appear faster or slower than 720p due to
+  warm-up state, CPU submission, driver scheduling, and wall-clock-only
+  measurement. Phase 9 reports statistics across repeated rounds and does
+  not treat individual faster results as performance improvements.
+
 ## [0.8.0] - Frame pacing, latency, and performance optimization
 
 ### Added

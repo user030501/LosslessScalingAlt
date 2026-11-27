@@ -113,3 +113,21 @@ query polling, and CPU timing around frame-generation dispatch. GPU query
 results are read non-blockingly; the ring remains bounded and skipped if GPU
 results are not ready. The dashboard distinguishes measured frame/GPU/CPU
 values from estimated latency and statistically computed 1% low frame time.
+
+## Phase 9 GPU resource ownership
+
+`TexturePool` is bounded both by entry count and by callers that trim it
+to an estimated byte budget. Pool entries are reused exactly by format,
+shape, and bind flags. Allocation and SRV/UAV creation failures are
+returned without blocking the caller or claiming a successful allocation.
+
+`ScalingEngineD3D11` and `FrameGenEngineD3D11` expose estimated owned
+texture memory for UI monitoring. Real DXGI memory pressure is queried
+through `IDXGIAdapter3` when supported; unavailable or unreliable driver
+data remains N/A instead of being presented as exact VRAM usage.
+
+`DynamicPerformanceManager` optionally steps scaling presets, sharpening,
+and expensive algorithms down under sustained measured overload. Changes
+use hysteresis and cooldown, are surfaced in the UI, and restore gradually.
+Disabling adaptive scaling restores the original scaling settings. Desktop
+resolution is never changed by adaptive logic.

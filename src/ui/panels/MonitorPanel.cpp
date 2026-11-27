@@ -228,6 +228,27 @@ void DrawMonitorPanel(AppState& state) {
         ImGui::Text("CPU Processing Time"); ImGui::Text("%.2f ms (measured)", fgStats.cpuProcessingMs);
         ImGui::Columns(1);
 
+        ImGui::Spacing();
+        ImGui::Columns(2, "fg_phase9_memory", false);
+        ImGui::Text("Estimated FrameGen Texture Memory");
+        ImGui::Text("%.1f MB (estimated)", fgStats.estimatedOwnedTextureBytes / (1024.0 * 1024.0));
+        ImGui::NextColumn();
+        ImGui::Text("GPU Memory Pressure");
+        if (fgStats.gpuMemoryPressurePercent > 0.0)
+            ImGui::Text("%.1f%% (measured budget usage)", fgStats.gpuMemoryPressurePercent);
+        else
+            ImGui::TextDisabled("N/A");
+        ImGui::Columns(1);
+        if (state.scalingEngine) {
+            ImGui::Text("Estimated Scaling Output: %.1f MB (estimated)",
+                        state.scalingEngine->EstimatedOutputTextureBytes() / (1024.0 * 1024.0));
+            ImGui::Text("Estimated Scaling Pool: %.1f MB (estimated)",
+                        state.scalingEngine->EstimatedPoolBytes() / (1024.0 * 1024.0));
+            ImGui::Text("GPU Device: %s",
+                        state.gpu.Device() && state.gpu.Device()->GetDeviceRemovedReason() == S_OK
+                            ? "Healthy" : "Removed/Unavailable");
+        }
+
         if (!fgStats.autoAdjustReason.empty()) {
             ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.2f, 1.0f), "Auto-adjusted: %s", fgStats.autoAdjustReason.c_str());

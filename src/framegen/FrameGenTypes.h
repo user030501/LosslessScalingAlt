@@ -66,6 +66,8 @@ struct FrameGenStats {
     double frameTimeVarianceMs = 0.0;
     double estimatedLatencyMs = 0.0;
     double cpuProcessingMs = 0.0;
+    uint64_t estimatedOwnedTextureBytes = 0;
+    double gpuMemoryPressurePercent = 0.0;
 
     // Phase 4: running avg/min/max of displayedFps since the engine was
     // last (re)enabled -- real incremental statistics over the same real

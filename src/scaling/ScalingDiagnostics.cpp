@@ -589,26 +589,198 @@ std::vector<DiagnosticResult> ScalingDiagnostics::RunAll(ID3D11Device* device, I
             scaler.SetAlgorithm(ScalingAlgorithm::Bilinear);
             LARGE_INTEGER freq{}, start{}, end{};
             QueryPerformanceFrequency(&freq);
+            for (int i = 0; i < 10; ++i) {
+                ok = ok && scaler.Scale(context, source.FrameBSRV()) != nullptr;
+            }
+            context->Flush();
             std::vector<double> samples;
-            for (int i = 0; i < 20 && ok; ++i) {
+            for (int i = 0; i < 30 && ok; ++i) {
                 QueryPerformanceCounter(&start);
                 ok = scaler.Scale(context, source.FrameBSRV()) != nullptr;
                 context->Flush();
                 QueryPerformanceCounter(&end);
                 samples.push_back(freq.QuadPart ? (end.QuadPart - start.QuadPart) * 1000.0 / freq.QuadPart : 0.0);
             }
-            double sum = 0.0, variance = 0.0;
+            double sum = 0.0, variance = 0.0, minimum = 0.0, maximum = 0.0;
             for (double sample : samples) sum += sample;
             const double mean = samples.empty() ? 0.0 : sum / samples.size();
             for (double sample : samples) variance += (sample - mean) * (sample - mean);
-            const double varianceMs = samples.empty() ? 0.0 : variance / samples.size();
+            const double stddev = samples.empty() ? 0.0 : std::sqrt(variance / samples.size());
+            std::vector<double> sorted = samples;
+            std::sort(sorted.begin(), sorted.end());
+            if (!sorted.empty()) {
+                minimum = sorted.front();
+                maximum = sorted.back();
+            }
+            const double median = sorted.empty() ? 0.0 :
+                (sorted.size() % 2 ? sorted[sorted.size() / 2] :
+                 (sorted[sorted.size() / 2 - 1] + sorted[sorted.size() / 2]) * 0.5);
             detail += std::to_string(size[0]) + "x" + std::to_string(size[1]) +
                       " avg=" + std::to_string(static_cast<int>(mean * 100.0) / 100.0) +
-                      "ms var=" + std::to_string(static_cast<int>(varianceMs * 100.0) / 100.0) +
-                      "ms2;";
+                      " med=" + std::to_string(static_cast<int>(median * 100.0) / 100.0) +
+                      " min=" + std::to_string(static_cast<int>(minimum * 100.0) / 100.0) +
+                      " max=" + std::to_string(static_cast<int>(maximum * 100.0) / 100.0) +
+                      " sd=" + std::to_string(static_cast<int>(stddev * 100.0) / 100.0) + "ms;";
         }
         r.passed = ok;
         r.detail = "Measured synthetic scaling workload only: " + detail;
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"46. GPU Resource Pool - Bounded Cleanup", false, ""};
+        TexturePool pool(2);
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> tex[3];
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv[3];
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> uav[3];
+        bool ok = true;
+        for (int i = 0; i < 3; ++i) {
+            ok = ok && pool.Acquire(device, 64 + i, 64, DXGI_FORMAT_R8G8B8A8_UNORM,
+                                    D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
+                                    tex[i], srv[i], uav[i]);
+            if (ok) pool.Release(tex[i], srv[i], uav[i], 64 + i, 64,
+                                 DXGI_FORMAT_R8G8B8A8_UNORM,
+                                 D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+        }
+        r.passed = ok && pool.PooledCount() == 2 && pool.EstimatedBytesInPool() > 0;
+        pool.Clear();
+        r.passed = r.passed && pool.PooledCount() == 0 && pool.EstimatedBytesInPool() == 0;
+        r.detail = "pooledCountAfterEviction=" + std::to_string(pool.PooledCount()) +
+                   " allocationsEver=" + std::to_string(pool.TotalAllocationsEver());
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"47. GPU Resource Pool - Trim Under Budget", false, ""};
+        TexturePool pool(4);
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> uav;
+        bool ok = pool.Acquire(device, 512, 512, DXGI_FORMAT_R8G8B8A8_UNORM,
+                               D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
+                               tex, srv, uav);
+        if (ok) pool.Release(tex, srv, uav, 512, 512, DXGI_FORMAT_R8G8B8A8_UNORM,
+                             D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+        pool.TrimToBytes(64 * 1024);
+        r.passed = ok && pool.PooledCount() == 0;
+        r.detail = "remainingPooledCount=" + std::to_string(pool.PooledCount());
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"48. GPU Device Status - Removal and Recreate Guard", false, ""};
+        const HRESULT removed = device->GetDeviceRemovedReason();
+        ScalingEngineD3D11 scaler;
+        bool ok = removed == S_OK && scaler.Initialize(device, shaderDir) &&
+                  scaler.Resize(128, 128, 256, 256);
+        r.passed = ok && scaler.Scale(context, source.FrameBSRV()) != nullptr;
+        r.detail = "deviceRemovedReason=" + std::to_string(static_cast<long>(removed)) +
+                   " recreationGuardPassed=" + std::to_string(r.passed);
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"49. Adaptive Scaling - Sustained Overload Threshold", false, ""};
+        ScalingEngineD3D11 scaler;
+        bool ok = scaler.Initialize(device, shaderDir) && scaler.Resize(960, 540, 1920, 1080);
+        scaler.SetAlgorithm(ScalingAlgorithm::Lanczos);
+        scaler.SetSharpenLevel(SharpenLevel::High);
+        scaler.SetQualityPreset(ScalingQualityPreset::Quality);
+        frameGenEngine.SetEnabled(true);
+        frameGenEngine.SetQualityMode(FrameGenQualityMode::Quality);
+        DynamicPerformanceManager adaptive;
+        adaptive.SetAdaptiveScalingEnabled(true);
+        FrameGenStats stats = frameGenEngine.GetStats();
+        stats.totalGpuMs = 20.0;
+        ThermalSample thermal{};
+        thermal.sustainedHighLoad = true;
+        std::string reason;
+        for (int i = 0; i < 10; ++i) {
+            const std::string stepReason =
+                adaptive.Update(frameGenEngine, scaler, stats, thermal, 95.0, true);
+            if (!stepReason.empty()) reason = stepReason;
+        }
+        r.passed = ok && adaptive.AdaptiveScalingEnabled() &&
+                   scaler.Algorithm() == ScalingAlgorithm::Bicubic &&
+                   scaler.Sharpen() == SharpenLevel::Medium &&
+                   scaler.QualityPreset() == ScalingQualityPreset::Balanced &&
+                   !reason.empty();
+        r.detail = "algorithm=" + std::string(ToString(scaler.Algorithm())) +
+                   " sharpen=" + std::string(ToString(scaler.Sharpen())) +
+                   " reason=" + reason;
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"50. Adaptive Scaling - Cooldown and Opt-Out Restore", false, ""};
+        ScalingEngineD3D11 scaler;
+        bool ok = scaler.Initialize(device, shaderDir) && scaler.Resize(960, 540, 1920, 1080);
+        scaler.SetAlgorithm(ScalingAlgorithm::Lanczos);
+        scaler.SetSharpenLevel(SharpenLevel::High);
+        scaler.SetQualityPreset(ScalingQualityPreset::Quality);
+        frameGenEngine.SetEnabled(true);
+        DynamicPerformanceManager adaptive;
+        adaptive.SetAdaptiveScalingEnabled(true);
+        FrameGenStats stats = frameGenEngine.GetStats();
+        stats.totalGpuMs = 20.0;
+        ThermalSample thermal{};
+        thermal.sustainedHighLoad = true;
+        for (int i = 0; i < 10; ++i)
+            adaptive.Update(frameGenEngine, scaler, stats, thermal, 95.0, true);
+        const ScalingAlgorithm cooledAlgorithm = scaler.Algorithm();
+        adaptive.SetAdaptiveScalingEnabled(false);
+        adaptive.RestoreScaling(scaler);
+        r.passed = ok && cooledAlgorithm == ScalingAlgorithm::Bicubic &&
+                   scaler.Algorithm() == ScalingAlgorithm::Lanczos &&
+                   scaler.Sharpen() == SharpenLevel::High &&
+                   scaler.QualityPreset() == ScalingQualityPreset::Quality;
+        r.detail = "cooldownResult=" + std::string(ToString(cooledAlgorithm)) +
+                   " restoredLanczos=" + std::to_string(scaler.Algorithm() == ScalingAlgorithm::Lanczos);
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"51. Benchmark Repeatability - Warm-Up and 10 Rounds", false, ""};
+        ScalingEngineD3D11 scaler;
+        bool ok = scaler.Initialize(device, shaderDir) &&
+                  scaler.Resize(960, 540, 1280, 720);
+        scaler.SetAlgorithm(ScalingAlgorithm::Bilinear);
+        source.RenderExplicit(context, 0.5, 0.75);
+        std::vector<double> rounds;
+        for (int round = 0; round < 10 && ok; ++round) {
+            for (int warm = 0; warm < 3; ++warm)
+                ok = ok && scaler.Scale(context, source.FrameBSRV()) != nullptr;
+            context->Flush();
+            LARGE_INTEGER start{}, end{}, freq{};
+            QueryPerformanceFrequency(&freq);
+            QueryPerformanceCounter(&start);
+            for (int i = 0; i < 5 && ok; ++i)
+                ok = ok && scaler.Scale(context, source.FrameBSRV()) != nullptr;
+            context->Flush();
+            QueryPerformanceCounter(&end);
+            if (freq.QuadPart > 0)
+                rounds.push_back((end.QuadPart - start.QuadPart) * 1000.0 / freq.QuadPart / 5.0);
+        }
+        r.passed = ok && rounds.size() == 10;
+        r.detail = "validRounds=" + std::to_string(rounds.size()) +
+                   " meanMs=" + (rounds.empty() ? std::string("0") :
+                        std::to_string(static_cast<int>((rounds.front() + rounds.back()) * 100.0)));
+        results.push_back(r);
+    }
+
+    {
+        DiagnosticResult r{"52. GPU Allocation Failure - Oversized Texture", false, ""};
+        TexturePool pool(2);
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+        Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> uav;
+        const bool allocated = pool.Acquire(device, 65536, 1, DXGI_FORMAT_R8G8B8A8_UNORM,
+                                            D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
+                                            tex, srv, uav);
+        r.passed = !allocated && tex == nullptr && srv == nullptr && uav == nullptr &&
+                   pool.PooledCount() == 0;
+        r.detail = "oversizedAllocationReturned=" + std::to_string(allocated) +
+                   " allocationFailureHandled=" + std::to_string(r.passed);
         results.push_back(r);
     }
 

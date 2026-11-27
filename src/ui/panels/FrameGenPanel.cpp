@@ -82,6 +82,18 @@ void DrawLiveEngineSection(AppState& state) {
                 "Never changes resolution. Manually picking a quality mode here still works while "
                 "this is on; it is just liable to be changed again under real sustained load.");
         }
+        bool adaptiveScaling = state.dynamicPerfManager->AdaptiveScalingEnabled();
+        if (ImGui::Checkbox("Adaptive Scaling (opt-in)", &adaptiveScaling)) {
+            state.dynamicPerfManager->SetAdaptiveScalingEnabled(adaptiveScaling);
+            if (!adaptiveScaling && state.scalingEngine) {
+                state.dynamicPerfManager->RestoreScaling(*state.scalingEngine);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Under sustained overload, temporarily lowers scaling quality/sharpening or "
+                "expensive sampling and restores them gradually. Desktop resolution is never changed.");
+        }
     }
 
     const FrameGenStats stats = state.frameGenEngine->GetStats();

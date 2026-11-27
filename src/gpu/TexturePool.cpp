@@ -96,6 +96,17 @@ void TexturePool::Release(Microsoft::WRL::ComPtr<ID3D11Texture2D> tex, Microsoft
 
 void TexturePool::Clear() { m_pooled.clear(); }
 
+void TexturePool::SetCapacity(size_t capacity) {
+    m_capacity = capacity;
+    while (m_pooled.size() > m_capacity) m_pooled.erase(m_pooled.begin());
+}
+
+void TexturePool::TrimToBytes(uint64_t maxBytes) {
+    while (!m_pooled.empty() && EstimatedBytesInPool() > maxBytes) {
+        m_pooled.erase(m_pooled.begin());
+    }
+}
+
 uint64_t TexturePool::EstimatedBytesInPool() const {
     uint64_t total = 0;
     for (const auto& e : m_pooled) total += e.bytes;

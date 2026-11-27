@@ -7,6 +7,7 @@
 namespace lsalt {
 
 class FrameGenEngineD3D11;
+class ScalingEngineD3D11;
 
 // Phase 3: closed-loop automatic quality-mode adjustment.
 //
@@ -42,11 +43,28 @@ public:
     // changed something, otherwise an empty string.
     std::string Update(FrameGenEngineD3D11& engine, const FrameGenStats& fgStats,
                         const ThermalSample& thermal, double gpuUtilPercent, bool gpuUtilValid);
+    std::string Update(FrameGenEngineD3D11& engine, ScalingEngineD3D11& scaling,
+                       const FrameGenStats& fgStats, const ThermalSample& thermal,
+                       double gpuUtilPercent, bool gpuUtilValid);
+    bool AdaptiveScalingEnabled() const { return m_adaptiveScalingEnabled; }
+    void SetAdaptiveScalingEnabled(bool enabled);
+    void RestoreScaling(ScalingEngineD3D11& scaling);
+    const std::string& LastAdaptiveScalingReason() const { return m_lastScalingReason; }
 
 private:
     bool m_autoEnabled = false;
     int m_consecutiveOverloadSamples = 0;
     int m_consecutiveHeadroomSamples = 0;
+    bool m_adaptiveScalingEnabled = false;
+    bool m_scalingBaselineValid = false;
+    int m_scalingCooldownSamples = 0;
+    int m_consecutiveScalingOverloadSamples = 0;
+    int m_consecutiveScalingHeadroomSamples = 0;
+    ScalingAlgorithm m_baselineAlgorithm = ScalingAlgorithm::Bilinear;
+    SharpenLevel m_baselineSharpen = SharpenLevel::Off;
+    ScalingQualityPreset m_baselineQuality = ScalingQualityPreset::Balanced;
+    ScalingQualityPreset m_currentAdaptiveScaling = ScalingQualityPreset::Balanced;
+    std::string m_lastScalingReason;
 
     // A few seconds of sustained overload before stepping down (avoid
     // reacting to a single noisy spike); much longer of sustained healthy

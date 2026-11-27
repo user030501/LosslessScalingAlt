@@ -56,6 +56,9 @@ what was verified on real hardware versus what's a known limitation.
   dropped/duplicate detection, GPU timestamp polling, adaptive quality
   opt-in, and measured vs estimated performance fields. Synthetic pacing
   benchmarks are explicitly labeled and are not real-game FPS results.
+- **Phase 9 GPU optimization**: bounded texture-pool trimming, estimated
+  owned texture memory, DXGI pressure reporting where available, and
+  opt-in adaptive scaling quality with cooldown and hysteresis.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the module map and
 real data-flow diagrams, and [`docs/BUILD.md`](docs/BUILD.md) /

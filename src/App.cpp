@@ -243,9 +243,15 @@ void App::RenderFrame() {
             }
 
             if (m_state.dynamicPerfManager && m_state.frameGenEngine) {
-                const std::string reason = m_state.dynamicPerfManager->Update(
-                    *m_state.frameGenEngine, m_state.frameGenEngine->GetStats(), m_state.lastThermalSample,
-                    m_state.lastStats.gpuUtilPercent, m_state.lastStats.gpuUtilValid);
+                const std::string reason = m_state.scalingEngine
+                    ? m_state.dynamicPerfManager->Update(
+                        *m_state.frameGenEngine, *m_state.scalingEngine,
+                        m_state.frameGenEngine->GetStats(), m_state.lastThermalSample,
+                        m_state.lastStats.gpuUtilPercent, m_state.lastStats.gpuUtilValid)
+                    : m_state.dynamicPerfManager->Update(
+                        *m_state.frameGenEngine, m_state.frameGenEngine->GetStats(),
+                        m_state.lastThermalSample, m_state.lastStats.gpuUtilPercent,
+                        m_state.lastStats.gpuUtilValid);
                 if (!reason.empty()) m_state.lastAutoPerfReason = reason;
             }
         }

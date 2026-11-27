@@ -69,6 +69,8 @@ public:
     bool PreserveAspectRatio() const { return m_preserveAspect; }
     AspectMode EffectiveAspectMode() const;
     SharpenLevel Sharpen() const { return m_sharpenLevel; }
+    ScalingQualityPreset QualityPreset() const { return m_qualityPreset; }
+    void SetQualityPreset(ScalingQualityPreset preset);
 
     // Exposed for diagnostics/UI: where (and how large) the actual scaled
     // content ended up within the destination texture, after aspect-mode
@@ -129,6 +131,7 @@ private:
     bool m_preserveAspect = true;
     AspectMode m_aspectMode = AspectMode::Fit;
     SharpenLevel m_sharpenLevel = SharpenLevel::Off;
+    ScalingQualityPreset m_qualityPreset = ScalingQualityPreset::Balanced;
     bool m_valid = false;
 
     std::function<bool(uint64_t&, uint64_t&)> m_vramQuery;
