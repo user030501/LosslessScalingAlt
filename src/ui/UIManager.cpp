@@ -24,6 +24,7 @@ const NavItem kNavItems[] = {
     {"Performance Monitor", &DrawMonitorPanel},
     {"GPU Settings", &DrawGpuSettingsPanel},
     {"Advanced Settings", &DrawAdvancedPanel},
+    {"Benchmark", &DrawBenchmarkPanel},
     {"About", &DrawAboutPanel},
 };
 } // namespace

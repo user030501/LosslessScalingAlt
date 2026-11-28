@@ -25,6 +25,7 @@
 #include "profiles/GameSessionController.h"
 #include "profiles/PerformanceHistory.h"
 #include "profiles/BenchmarkHistory.h"
+#include "benchmark/BenchmarkRunner.h"
 #include "profiles/ProfileDiagnostics.h"
 
 namespace lsalt {
@@ -98,6 +99,8 @@ struct AppState {
     GameSessionController gameSession;
     PerformanceHistory perfHistory;
     BenchmarkHistory benchmarkHistory;
+    // Phase 11: Benchmark runner instance for UI-driven performance measurement.
+    BenchmarkRunner benchmarkRunner;
     std::vector<DetectedProcess> lastGameScan;
     uint64_t deviceRecoveryCount = 0;
 };
