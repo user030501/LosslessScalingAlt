@@ -28,6 +28,17 @@ private:
 
 // BenchmarkRunner drives a SyntheticSource, gathers timestamps via FramePacing,
 // computes statistics and stores the result in BenchmarkHistory.
+
+// Execution state of the benchmark runner.
+enum class BenchmarkState {
+    Idle,
+    Running,
+    Completed,
+    Cancelled,
+    Failed
+};
+
+// Duplicate definition removed
 class BenchmarkRunner {
 public:
     struct Config {
@@ -64,32 +75,6 @@ private:
     std::mutex m_mutex;
     Config m_config;
     int m_currentIteration{0}; // 0‑based, includes warm‑up + measured
-};
-
-} // namespace lsalt
-public:
-    BenchmarkRunner();
-    ~BenchmarkRunner();
-
-    // Begins an asynchronous benchmark run with the given profile settings.
-    void Start(const GameProfile& profile);
-    // Requests stop – blocks until the run is finished and result persisted.
-    void Stop();
-    // Returns true if a run is currently active.
-    bool IsRunning() const;
-
-private:
-    void RunLoop(const GameProfile& profile);
-    void ComputeResult();
-
-    std::atomic<bool> m_running{false};
-    std::thread m_thread;
-    SyntheticSource m_source;
-    // The vector of raw per‑frame timings (ms) captured from FramePacing.
-    std::vector<double> m_frameTimes;
-    BenchmarkResult m_result;
-    BenchmarkHistory m_history; // writes to persistent storage.
-    std::mutex m_mutex; // protects m_frameTimes while running.
 };
 
 } // namespace lsalt

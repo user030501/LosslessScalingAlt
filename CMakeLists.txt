@@ -100,14 +100,32 @@ add_custom_command(TARGET LSAlt POST_BUILD
     COMMENT "Copying Frame Generation / Scaling / Presenter HLSL shaders next to the executable"
 )
 
-# ---------------------------------------------------------------------------
-# Packaging: `cmake --install build/windows-x64 --prefix <dir> --config Release`
-# produces a self-contained portable layout (exe + shaders + docs) at <dir>.
-# That same layout is what packaging/installer.iss (Inno Setup) wraps into a
-# Windows installer -- see docs/INSTALLATION.md.
-# ---------------------------------------------------------------------------
-install(TARGETS LSAlt RUNTIME DESTINATION .)
-install(DIRECTORY src/framegen/shaders/ DESTINATION shaders/framegen)
-install(DIRECTORY src/scaling/shaders/ DESTINATION shaders/scaling)
-install(DIRECTORY src/presenter/shaders/ DESTINATION shaders/presenter)
-install(FILES README.md LICENSE CHANGELOG.md DESTINATION .)
+# Add GoogleTest for unit testing
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  URL https://github.com/google/googletest/archive/refs/heads/main.zip
+)
+# For Windows: use the same CRT as the parent project
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
+
+enable_testing()
+
+add_executable(benchmark_tests
+    test/benchmark_tests.cpp
+    src/benchmark/BenchmarkRunner.cpp
+    src/profiles/BenchmarkHistory.cpp
+    src/profiles/GameProfile.cpp
+)
+
+target_include_directories(benchmark_tests PRIVATE src)
+
+target_link_libraries(benchmark_tests PRIVATE
+    GTest::gtest
+    GTest::gtest_main
+)
+
+gtest_discover_tests(benchmark_tests)
+
+

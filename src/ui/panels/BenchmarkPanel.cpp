@@ -87,8 +87,10 @@ void DrawBenchmarkPanel(AppState& state) {
     } else {
         if (ImGui::Button("Cancel Benchmark", ImVec2(-1, 0))) {
             state.benchmarkRunner.Stop();
-            // Copy the latest result into the global history for UI display
-            state.benchmarkHistory.Add(state.benchmarkRunner.LatestResult());
+            // Only add to history if benchmark completed successfully
+            if (state.benchmarkRunner.GetState() == lsalt::BenchmarkState::Completed) {
+                state.benchmarkHistory.Add(state.benchmarkRunner.LatestResult());
+            }
         }
     }
 
