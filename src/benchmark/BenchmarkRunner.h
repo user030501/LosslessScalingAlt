@@ -45,6 +45,7 @@ public:
         int warmupIterations = 1;      // how many warm‑up runs (discarded)
         int benchmarkIterations = 5;  // number of measured runs
         int framesPerIteration = 100; // synthetic frames per iteration
+        bool forceFailure = false;    // test‑only: force exception in RunLoop
     };
 
     BenchmarkRunner();

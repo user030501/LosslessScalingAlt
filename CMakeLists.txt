@@ -100,15 +100,21 @@ add_custom_command(TARGET LSAlt POST_BUILD
     COMMENT "Copying Frame Generation / Scaling / Presenter HLSL shaders next to the executable"
 )
 
-# Add GoogleTest for unit testing
-include(FetchContent)
-FetchContent_Declare(
-  googletest
-  URL https://github.com/google/googletest/archive/refs/heads/main.zip
-)
-# For Windows: use the same CRT as the parent project
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(googletest)
+# Add GoogleTest for unit testing (pinned version, offline capable)
+option(GOOGLETEST_DOWNLOAD "Download GoogleTest from the internet" OFF)
+if(GOOGLETEST_DOWNLOAD)
+    include(FetchContent)
+    FetchContent_Declare(
+        googletest
+        URL https://github.com/google/googletest/archive/refs/tags/release-1.12.1.zip
+    )
+    # For Windows: use the same CRT as the parent project
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+else()
+    # Expect googletest source tree at third_party/googletest
+    add_subdirectory(third_party/googletest)
+endif()
 
 enable_testing()
 
@@ -122,6 +128,7 @@ add_executable(benchmark_tests
 target_include_directories(benchmark_tests PRIVATE src)
 
 target_link_libraries(benchmark_tests PRIVATE
+    LSAlt
     GTest::gtest
     GTest::gtest_main
 )
